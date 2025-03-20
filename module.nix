@@ -115,7 +115,7 @@ in
       # Auto-reset state if not running on a runtime-modules system
       if [ ! -f "/etc/runtime-modules-enabled" ]; then
         if [ -f "${dataDir}/runtime-modules.nix" ]; then
-          [runtime-modules] standard system detected, cleaning runtime state...
+          echo "[runtime-modules] standard system detected, cleaning runtime state..."
           rm ${dataDir}/runtime-modules.nix
         fi
       fi
