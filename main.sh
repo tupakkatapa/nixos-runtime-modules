@@ -10,18 +10,11 @@ if [[ $# -eq 1 ]]; then
 elif [[ $# -ge 2 ]]; then
   MODULE="$1"
   ACTION="$2"
-else
-  ACTION="help"
-  MODULE=""
 fi
 
 SYSTEM_MODULES_DIR="@DATA_DIR@"
-HOST="@HOST_NAME@"
-BASE_FLAKE="@FLAKE_URL@"
-STATE_FILE="$SYSTEM_MODULES_DIR/state.json"
-MODULES_FILE="$SYSTEM_MODULES_DIR/modules.json"
-ORIGINAL_FLAKE_DIR="$SYSTEM_MODULES_DIR/original_flake"
-FLAKE_FILE="$SYSTEM_MODULES_DIR/flake.nix"
+MODULES_JSON='@MODULES_JSON@'
+MODULES_FILE="$SYSTEM_MODULES_DIR/runtime-modules.nix"
 
 # Default flags for the nix command
 declare -a NIX_FLAGS=(
@@ -44,153 +37,91 @@ show_help() {
   echo ""
 }
 
-# Make sure the original flake is available and updated
-ensure_original_flake() {
-  # Create the directory if it doesn't exist
-  mkdir -p "$ORIGINAL_FLAKE_DIR"
-
-  if [[ $BASE_FLAKE == github:* ]]; then
-    # Extract the GitHub repo URL
-    REPO_URL=$(echo "$BASE_FLAKE" | sed 's/^github:/https:\/\/github.com\//')
-
-    # Check if it's already a git repo
-    if [[ -d "$ORIGINAL_FLAKE_DIR/.git" ]]; then
-      echo "updating existing git repository.."
-      (cd "$ORIGINAL_FLAKE_DIR" && git pull)
-    else
-      echo "cloning git repository.."
-      # Clear the directory first
-      rm -rf "$ORIGINAL_FLAKE_DIR"
-      mkdir -p "$ORIGINAL_FLAKE_DIR"
-
-      # Extract branch/tag if specified (after the first /)
-      if [[ $REPO_URL == */* ]]; then
-        BRANCH=$(echo "$REPO_URL" | cut -d'/' -f4-)
-        REPO_URL=$(echo "$REPO_URL" | cut -d'/' -f1-3)
-
-        # Clone the repo with the specific branch/tag
-        git clone --depth 1 --branch "$BRANCH" "$REPO_URL" "$ORIGINAL_FLAKE_DIR"
-      else
-        # Clone the repo without specific branch
-        git clone --depth 1 "$REPO_URL" "$ORIGINAL_FLAKE_DIR"
-      fi
-    fi
-  elif [[ $BASE_FLAKE == path:* ]]; then
-    # Extract the local path
-    LOCAL_PATH=${BASE_FLAKE#path:}
-
-    # Always update with rsync, taking .gitignore into account
-    echo "updating from '$LOCAL_PATH' to '$ORIGINAL_FLAKE_DIR'"
-    if [[ -f "$LOCAL_PATH/.gitignore" ]]; then
-      # Use .gitignore if it exists
-      rsync -a --delete --exclude='/.git' --filter='dir-merge,-n /.gitignore' "$LOCAL_PATH/" "$ORIGINAL_FLAKE_DIR/"
-    else
-      # If no .gitignore, just exclude .git
-      rsync -a --delete --exclude='/.git' "$LOCAL_PATH/" "$ORIGINAL_FLAKE_DIR/"
-    fi
-  else
-    echo "error: unsupported flake URL format '$BASE_FLAKE'"
-    exit 1
-  fi
-
-  # Ensure flake directory has correct permissions
-  chmod -R 755 "$ORIGINAL_FLAKE_DIR"
-}
-
 # Check if module exists in the registry
 check_module() {
-  if ! jq -e '.modules[] | select(.name == "'"$MODULE"'")' "$MODULES_FILE" >/dev/null; then
+  if ! echo "$MODULES_JSON" | jq -e '.modules[] | select(.name == "'"$MODULE"'")' >/dev/null; then
     echo "error: module '$MODULE' not found"
     echo "available modules:"
-    jq -r '.modules[].name' "$MODULES_FILE"
+    echo "$MODULES_JSON" | jq -r '.modules[].name'
     exit 1
   fi
 }
 
 # Get module path from the registry
 get_module_path() {
-  jq -r '.modules[] | select(.name == "'"$1"'") | .path' "$MODULES_FILE"
+  echo "$MODULES_JSON" | jq -r '.modules[] | select(.name == "'"$1"'") | .path'
 }
 
-# Check if a module is enabled
+# Check if a module is enabled by parsing runtime-modules.nix
 is_module_enabled() {
   local mod="$1"
-  jq -e '.enabledModules | index("'"$mod"'")' "$STATE_FILE" >/dev/null
-  return $?
+  local module_path
+
+  module_path=$(get_module_path "$mod")
+
+  # Module is enabled if its path is in the modules file
+  if [[ -f $MODULES_FILE ]]; then
+    grep -q "\"$module_path\"" "$MODULES_FILE"
+    return $?
+  fi
+  return 1
 }
 
-# List all modules with their status
-list_modules() {
-  echo "Available runtime modules:"
-  echo ""
-
-  jq -r '.modules[].name' "$MODULES_FILE" | while read -r name; do
-    if is_module_enabled "$name"; then
-      status="[✓]"
-    else
-      status="[ ]"
-    fi
-    echo "$status $name"
-  done
-}
-
-# Get list of all active modules
+# Get list of all active modules by parsing runtime-modules.nix
 get_active_modules() {
-  jq -r '.enabledModules[]' "$STATE_FILE"
-}
+  if [ ! -f "$MODULES_FILE" ]; then
+    return
+  fi
 
-# Update the enabled modules list in state.json
-update_enabled_modules() {
-  local modules=("$@")
-  local json_array
-  json_array=$(printf '"%s",' "${modules[@]}" | sed 's/,$//')
-  echo "{\"enabledModules\": [$json_array]}" >"$STATE_FILE"
-}
+  local paths
 
-# Create or update the temporary flake.nix
-generate_tmp_flake() {
-  # Get list of currently active modules
-  mapfile -t active_modules < <(get_active_modules)
+  # Extract all paths from the modules file
+  paths=$(grep -oE '"[^"]+"' "$MODULES_FILE" | tr -d '"' | grep -v "^$")
 
-  # Generate module imports for flake.nix
-  module_paths=""
-  for mod in "${active_modules[@]}"; do
-    module_path=$(get_module_path "$mod")
-    # Use the relative path to the original module in the original flake structure
-    module_paths+="        \"$module_path\"\n"
+  # For each path, find the module name
+  for path in $paths; do
+    echo "$MODULES_JSON" | jq -r --arg path "$path" '.modules[] | select(.path == $path) | .name'
   done
-
-  # Write the flake.nix file
-  cat >"$FLAKE_FILE" <<EOF
-{
-  description = "Runtime modules configuration";
-
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.base.url = "path:$ORIGINAL_FLAKE_DIR";
-
-  outputs = { self, nixpkgs, base }: {
-    nixosConfigurations.runtime = base.nixosConfigurations.$HOST.extendModules {
-      modules = [
-$(echo -e "$module_paths")
-      ];
-    };
-  };
 }
-EOF
 
-  # Fix permissions on the flake file
-  chmod 644 "$FLAKE_FILE"
+# Create or update the runtime-modules.nix file with the specified modules
+generate_modules_file() {
+  local modules=("$@")
+
+  # Start creating the modules file
+  echo "# This file is generated by runtime-module script" >"$MODULES_FILE"
+  echo "{ ... }:" >>"$MODULES_FILE"
+  echo "{" >>"$MODULES_FILE"
+
+  if [[ ${#modules[@]} -eq 0 ]]; then
+    # If no modules are active, return an empty module
+    echo "  # No active modules" >>"$MODULES_FILE"
+  else
+    echo "  imports = [" >>"$MODULES_FILE"
+
+    # Add each module path
+    for mod in "${modules[@]}"; do
+      module_path=$(get_module_path "$mod")
+      if [[ -n $module_path ]]; then
+        echo "    \"$module_path\"" >>"$MODULES_FILE"
+      fi
+    done
+
+    echo "  ];" >>"$MODULES_FILE"
+  fi
+
+  echo "}" >>"$MODULES_FILE"
+
+  # Fix permissions
+  chmod 644 "$MODULES_FILE"
 
   # Debug info
-  echo "generated flake.nix at '$FLAKE_FILE'"
+  echo "generated modules file at '$MODULES_FILE'"
 }
 
 # Apply the current configuration
 apply_configuration() {
   echo "applying configuration.."
-
-  # Generate the temporary flake
-  generate_tmp_flake
 
   # Change to the system modules directory
   cd "$SYSTEM_MODULES_DIR"
@@ -207,7 +138,17 @@ apply_configuration() {
 # Handle commands
 case "$ACTION" in
 list)
-  list_modules
+  echo "Available runtime modules:"
+  echo ""
+
+  echo "$MODULES_JSON" | jq -r '.modules[].name' | while read -r name; do
+    if is_module_enabled "$name"; then
+      status="[✓]"
+    else
+      status="[ ]"
+    fi
+    echo "$status $name"
+  done
   ;;
 
 reset)
@@ -218,13 +159,10 @@ reset)
     exit $?
   fi
 
-  # Ensure original flake is available
-  ensure_original_flake
-
   echo "resetting to base system (disabling all modules).."
 
-  # Empty the array of enabled modules
-  update_enabled_modules
+  # Create empty modules file (no modules enabled)
+  generate_modules_file
 
   # Apply the configuration
   apply_configuration
@@ -254,9 +192,6 @@ enable)
   # Check if module exists
   check_module
 
-  # Ensure original flake is available
-  ensure_original_flake
-
   echo "building module $MODULE.."
 
   # Get current enabled modules
@@ -265,10 +200,12 @@ enable)
   # Add the current module if not already active
   if ! is_module_enabled "$MODULE"; then
     active_modules+=("$MODULE")
-    update_enabled_modules "${active_modules[@]}"
   else
     echo "module $MODULE is already enabled"
   fi
+
+  # Generate modules file with updated modules list
+  generate_modules_file "${active_modules[@]}"
 
   # Apply the configuration
   apply_configuration
@@ -298,9 +235,6 @@ disable)
   # Check if module exists
   check_module
 
-  # Ensure original flake is available
-  ensure_original_flake
-
   # Check if module is enabled first
   if ! is_module_enabled "$MODULE"; then
     echo "error: module $MODULE is already disabled"
@@ -314,13 +248,13 @@ disable)
   new_enabled_modules=()
 
   for mod in "${enabled_modules[@]}"; do
-    if [[ $mod != "$MODULE" ]]; then
+    if [[ $mod != "$MODULE" && -n $mod ]]; then
       new_enabled_modules+=("$mod")
     fi
   done
 
-  # Update the state file
-  update_enabled_modules "${new_enabled_modules[@]}"
+  # Generate modules file with updated modules list
+  generate_modules_file "${new_enabled_modules[@]}"
 
   # Apply the configuration
   apply_configuration

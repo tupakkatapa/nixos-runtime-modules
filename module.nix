@@ -2,6 +2,43 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.services.runtimeModules;
+  dataDir = "/run/runtime-modules";
+
+  # Generate the modules.json content
+  modulesJson = builtins.toJSON {
+    modules = map
+      (module: {
+        inherit (module) name;
+        path = toString module.path;
+      })
+      cfg.modules;
+  };
+
+  # Create a static flake file that imports a dynamically generated modules file
+  staticFlakeFile = pkgs.writeTextFile {
+    name = "runtime-modules-flake";
+    destination = "/flake.nix";
+    text = ''
+      {
+        description = "Runtime modules configuration";
+
+        # Inherit nixpkgs from base flake
+        inputs.base.url = "${cfg.flakeUrl}";
+        inputs.nixpkgs.follows = "base/nixpkgs";
+
+        outputs = { self, nixpkgs, base }: {
+          nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
+            modules = [
+              # Import the dynamically generated modules file
+              ./runtime-modules.nix
+              # Add a marker file to detect systems built using runtime-modules
+              { environment.etc."runtime-modules-enabled".text = "true"; }
+            ];
+          };
+        };
+      }
+    '';
+  };
 
   # Create the module manager script by substituting values directly
   moduleManagerScript =
@@ -13,28 +50,21 @@ let
       scriptWithValues = builtins.replaceStrings
         [
           "@DATA_DIR@"
-          "@HOST_NAME@"
-          "@FLAKE_URL@"
+          "@MODULES_JSON@"
         ]
         [
-          "${cfg.dataDir}"
-          "${config.networking.hostName}"
-          "${cfg.flakeUrl}"
+          "${dataDir}"
+          "${modulesJson}"
         ]
         scriptContent;
     in
     pkgs.writeShellApplication {
       name = "runtime-module";
       runtimeInputs = with pkgs; [
-        nix
         coreutils
         gnugrep
-        git
-        rsync
-        findutils
-        gnused
-        gawk
         jq
+        nix
       ];
       text = scriptWithValues;
     };
@@ -47,12 +77,6 @@ in
     flakeUrl = lib.mkOption {
       type = lib.types.str;
       description = "Base flake reference to extend from";
-    };
-
-    dataDir = lib.mkOption {
-      type = lib.types.path;
-      default = "/var/lib/runtime-modules";
-      description = "Directory to store module files";
     };
 
     modules = lib.mkOption {
@@ -79,37 +103,22 @@ in
       moduleManagerScript
     ];
 
-    # Set up the runtime modules environment
-    system.activationScripts.runtimeModulesSetup = ''
-            echo "Setting up runtime modules in ${cfg.dataDir}..."
-            mkdir -p ${cfg.dataDir}
+    # Ensure the directory exists during activation
+    system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
+      echo "[runtime-modules] setting up ${dataDir}..."
+      mkdir -p -m 644 ${dataDir}
 
-            # Create state file to track enabled modules if it doesn't exist
-            if [ ! -f ${cfg.dataDir}/state.json ]; then
-              echo '{"enabledModules": []}' > ${cfg.dataDir}/state.json
-            fi
+      # Copy the static flake file
+      cp -f ${staticFlakeFile}/flake.nix ${dataDir}/flake.nix
+      chmod 644 ${dataDir}/flake.nix
 
-            # Set up the module registry
-            echo "Setting up module registry..."
-            cat > ${cfg.dataDir}/modules.json << EOF
-            {
-              "modules": [
-                ${lib.concatMapStringsSep ",\n          " (module: ''
-                  {
-                    "name": "${module.name}",
-                    "path": "${toString module.path}"
-                  }
-                '') cfg.modules}
-              ]
-            }
-      EOF
-
-            # Create needed directories if they don't exist
-            mkdir -p ${cfg.dataDir}/original_flake
-
-            # Ensure permissions are correct
-            chown -R root:root ${cfg.dataDir}
-            chmod -R 755 ${cfg.dataDir}
+      # Auto-reset state if not running on a runtime-modules system
+      if [ ! -f "/etc/runtime-modules-enabled" ]; then
+        if [ -f "${dataDir}/runtime-modules.nix" ]; then
+          [runtime-modules] standard system detected, cleaning runtime state...
+          rm ${dataDir}/runtime-modules.nix
+        fi
+      fi
     '';
   };
 }

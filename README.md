@@ -37,7 +37,6 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
 
 - **`enable`** – Enables the runtime modules system.
 - **`flakeUrl`** – The base flake reference to extend from.
-- **`dataDir`** – The directory to store module files.
 - **`modules`** – List of modules that can be dynamically enabled/disabled.
 
 ### Example Configuration:
