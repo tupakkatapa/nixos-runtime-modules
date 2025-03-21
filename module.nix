@@ -40,35 +40,10 @@ let
     '';
   };
 
-  # Create the module manager script by substituting values directly
-  moduleManagerScript =
-    let
-      # Read the main script content
-      scriptContent = builtins.readFile ./main.sh;
-
-      # Substitute configuration values directly into the script
-      scriptWithValues = builtins.replaceStrings
-        [
-          "@DATA_DIR@"
-          "@MODULES_JSON@"
-        ]
-        [
-          "${dataDir}"
-          "${modulesJson}"
-        ]
-        scriptContent;
-    in
-    pkgs.writeShellApplication {
-      name = "runtime-module";
-      runtimeInputs = with pkgs; [
-        coreutils
-        gnugrep
-        jq
-        nix
-      ];
-      text = scriptWithValues;
-    };
-
+  # Create the module manager script
+  moduleManagerScript = pkgs.callPackage ./package.nix {
+    inherit dataDir modulesJson;
+  };
 in
 {
   options.services.runtimeModules = {
