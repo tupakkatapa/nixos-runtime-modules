@@ -28,12 +28,12 @@ show_help() {
   echo "   or: runtime-module <action> <module-name>"
   echo ""
   echo "Actions:"
-  echo "  enable        - Build and enable the module"
-  echo "  disable       - Disable specific module"
-  echo "  reset         - Disable all modules (revert to base system)"
-  echo "  status        - Show module status (enabled/disabled)"
-  echo "  list          - List all available modules"
-  echo "  help          - Show this help message"
+  echo "  enable <module>   - Build and enable the module"
+  echo "  disable <module>  - Disable specific module"
+  echo "  reset             - Disable all modules (revert to base system)"
+  echo "  status <module>   - Show module status (enabled/disabled)"
+  echo "  list              - List all available modules"
+  echo "  help              - Show this help message"
   echo ""
 }
 
