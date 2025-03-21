@@ -106,7 +106,7 @@ in
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
       echo "[runtime-modules] setting up ${dataDir}..."
-      mkdir -p -m 644 ${dataDir}
+      mkdir -p -m 755 ${dataDir}
 
       # Copy the static flake file
       cp -f ${staticFlakeFile}/flake.nix ${dataDir}/flake.nix

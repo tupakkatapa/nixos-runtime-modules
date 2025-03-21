@@ -113,7 +113,7 @@ generate_modules_file() {
   echo "}" >>"$MODULES_FILE"
 
   # Fix permissions
-  chmod 644 "$MODULES_FILE"
+  chmod 755 "$MODULES_FILE"
 
   # Debug info
   echo "generated modules file at '$MODULES_FILE'"
