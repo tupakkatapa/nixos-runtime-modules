@@ -142,14 +142,13 @@ apply_configuration() {
 # Handle commands
 case "$ACTION" in
 list)
-  echo "Available runtime modules:"
-  echo ""
+  echo "Available modules:"
 
   echo "$MODULES_JSON" | jq -r '.modules[].name' | while read -r name; do
     if is_module_enabled "$name"; then
-      status="[✓]"
+      status="  [✓]"
     else
-      status="[ ]"
+      status="  [ ]"
     fi
     echo "$status $name"
   done
