@@ -1,39 +1,33 @@
-{ pkgs
+{ rustPlatform
+, pkgs
 , lib
-, dataDir
-, modulesJson
-, modulesNix
-, ...
+, nix
 }:
 let
-  packageName = "runtime-module";
+  manifest = (lib.importTOML ./Cargo.toml).package;
 in
-pkgs.stdenv.mkDerivation rec {
-  name = packageName;
-  version = "0.1.0";
+rustPlatform.buildRustPackage rec {
+  pname = manifest.name;
+  inherit (manifest) version;
 
-  src = ./.;
-
-  buildInputs = with pkgs; [
-    coreutils
-    gnugrep
-    jq
-    nix
+  nativeBuildInputs = with pkgs; [
+    pkg-config
+    makeWrapper
   ];
 
-  nativeBuildInputs = [ pkgs.makeWrapper ];
+  src = lib.sourceByRegex ./. [
+    "^Cargo.toml$"
+    "^Cargo.lock$"
+    "^src.*$"
+  ];
 
-  installPhase = ''
-    mkdir -p $out/bin
-    cp $src/main.sh $out/bin/${packageName}
-    chmod +x $out/bin/${packageName}
+  cargoLock.lockFile = ./Cargo.lock;
 
-    substituteInPlace $out/bin/${packageName} \
-      --replace "@DATA_DIR@" "${dataDir}" \
-      --replace "@MODULES_JSON@" '${modulesJson}' \
-      --replace "@MODULES_NIX@" '${modulesNix}'
-
-    wrapProgram $out/bin/${packageName} \
-      --prefix PATH : ${lib.makeBinPath buildInputs}
+  postInstall = ''
+    wrapProgram $out/bin/${pname} \
+      --prefix PATH : ${lib.makeBinPath [ nix ]}
   '';
+
+  # Tests require access to a /nix/ and a nix daemon; we run them at pre-commit instead
+  doCheck = false;
 }

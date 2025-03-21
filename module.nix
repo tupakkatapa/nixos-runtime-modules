@@ -15,6 +15,11 @@ let
       cfg.modules;
   };
 
+  # Build the Rust program
+  moduleManagerRust = pkgs.callPackage ./package.nix {
+    inherit (pkgs) rustPlatform nix;
+  };
+
   # Create a static flake file that imports a dynamically generated modules file
   staticFlakeFile = pkgs.writeTextFile {
     name = "runtime-modules-flake";
@@ -39,11 +44,6 @@ let
         };
       }
     '';
-  };
-
-  # Create the module manager script
-  moduleManagerScript = pkgs.callPackage ./package.nix {
-    inherit dataDir modulesJson modulesNix;
   };
 in
 {
@@ -76,7 +76,7 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.systemPackages = [
-      moduleManagerScript
+      moduleManagerRust
     ];
 
     # Ensure the directory exists during activation
@@ -87,6 +87,10 @@ in
       # Copy the static flake file
       cp -f ${staticFlakeFile}/flake.nix ${dataDir}/flake.nix
       chmod 644 ${dataDir}/flake.nix
+
+      # Write the modules.json file
+      echo '${modulesJson}' > ${dataDir}/modules.json
+      chmod 644 ${dataDir}/modules.json
 
       # Auto-reset state if not running on a runtime-modules system
       if [ ! -f "/etc/runtime-modules-enabled" ]; then
