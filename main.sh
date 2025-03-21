@@ -126,6 +126,10 @@ apply_configuration() {
   # Change to the system modules directory
   cd "$SYSTEM_MODULES_DIR"
 
+  # Update flake before rebuild
+  echo "updating flake..."
+  nix flake update "${NIX_FLAGS[@]}"
+
   # Run nixos-rebuild
   set +e
   nixos-rebuild test "${NIX_FLAGS[@]}" --flake ".#runtime"
