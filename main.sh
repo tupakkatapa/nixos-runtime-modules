@@ -14,7 +14,7 @@ fi
 
 SYSTEM_MODULES_DIR="@DATA_DIR@"
 MODULES_JSON='@MODULES_JSON@'
-MODULES_FILE="$SYSTEM_MODULES_DIR/runtime-modules.nix"
+MODULES_FILE="@MODULES_NIX@"
 
 # Default flags for the nix command
 declare -a NIX_FLAGS=(

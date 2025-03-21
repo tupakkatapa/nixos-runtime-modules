@@ -3,6 +3,7 @@
 let
   cfg = config.services.runtimeModules;
   dataDir = "/run/runtime-modules";
+  modulesNix = "${dataDir}/runtime-modules.nix";
 
   # Generate the modules.json content
   modulesJson = builtins.toJSON {
@@ -30,7 +31,7 @@ let
           nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
             modules = [
               # Import the dynamically generated modules file
-              ./runtime-modules.nix
+              ${modulesNix}
               # Add a marker file to detect systems built using runtime-modules
               { environment.etc."runtime-modules-enabled".text = "true"; }
             ];
@@ -42,7 +43,7 @@ let
 
   # Create the module manager script
   moduleManagerScript = pkgs.callPackage ./package.nix {
-    inherit dataDir modulesJson;
+    inherit dataDir modulesJson modulesNix;
   };
 in
 {
@@ -89,9 +90,9 @@ in
 
       # Auto-reset state if not running on a runtime-modules system
       if [ ! -f "/etc/runtime-modules-enabled" ]; then
-        if [ -f "${dataDir}/runtime-modules.nix" ]; then
+        if [ -f "${modulesNix}" ]; then
           echo "[runtime-modules] standard system detected, cleaning runtime state..."
-          rm ${dataDir}/runtime-modules.nix
+          rm ${modulesNix}
         fi
       fi
     '';

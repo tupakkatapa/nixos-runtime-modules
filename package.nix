@@ -2,6 +2,7 @@
 , lib
 , dataDir
 , modulesJson
+, modulesNix
 , ...
 }:
 let
@@ -29,7 +30,8 @@ pkgs.stdenv.mkDerivation rec {
 
     substituteInPlace $out/bin/${packageName} \
       --replace "@DATA_DIR@" "${dataDir}" \
-      --replace "@MODULES_JSON@" '${modulesJson}'
+      --replace "@MODULES_JSON@" '${modulesJson}' \
+      --replace "@MODULES_NIX@" '${modulesNix}'
 
     wrapProgram $out/bin/${packageName} \
       --prefix PATH : ${lib.makeBinPath buildInputs}
