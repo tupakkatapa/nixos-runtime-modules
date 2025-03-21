@@ -8,8 +8,8 @@ if [[ $# -eq 1 ]]; then
   ACTION="$1"
   MODULE=""
 elif [[ $# -ge 2 ]]; then
-  MODULE="$1"
-  ACTION="$2"
+  ACTION="$1"
+  MODULE="$2"
 fi
 
 SYSTEM_MODULES_DIR="@DATA_DIR@"
@@ -24,8 +24,8 @@ declare -a NIX_FLAGS=(
 
 # Help text
 show_help() {
-  echo "Usage: runtime-module <module-name> <action>"
-  echo "   or: runtime-module <action>"
+  echo "Usage: runtime-module <action>"
+  echo "   or: runtime-module <action> <module-name>"
   echo ""
   echo "Actions:"
   echo "  enable        - Build and enable the module"
