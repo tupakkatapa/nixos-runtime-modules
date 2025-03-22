@@ -3,3 +3,7 @@
 .pre-commit-config.yaml
 result
 
+debug/
+target/
+**/*.rs.bk
+*.pdb

@@ -41,21 +41,41 @@
               nixpkgs-fmt.enable = true;
               deadnix.enable = true;
               statix.enable = true;
-              shfmt.enable = true;
+              rustfmt.enable = true;
             };
           };
 
           # Development shell -> 'nix develop' or 'direnv allow'
-          devenv.shells.default = {
-            pre-commit.hooks = {
-              # shellcheck.enable = true;
-              treefmt = {
+          devenv.shells = {
+            default = {
+              packages = with pkgs; [
+                cargo-tarpaulin
+              ];
+              languages.rust = {
                 enable = true;
-                package = config.treefmt.build.wrapper;
+                components = [ "cargo" "clippy" ];
               };
+              pre-commit.hooks = {
+                treefmt = {
+                  enable = true;
+                  package = config.treefmt.build.wrapper;
+                };
+                pedantic-clippy = {
+                  enable = true;
+                  entry = "cargo clippy -- -D clippy::pedantic";
+                  files = "\\.rs$";
+                  pass_filenames = false;
+                };
+                cargo-test = {
+                  enable = true;
+                  entry = "cargo test --all-features";
+                  files = "\\.rs$";
+                  pass_filenames = false;
+                };
+              };
+              # Workaround for https://github.com/cachix/devenv/issues/760
+              containers = pkgs.lib.mkForce { };
             };
-            # Workaround for https://github.com/cachix/devenv/issues/760
-            containers = pkgs.lib.mkForce { };
           };
         };
 

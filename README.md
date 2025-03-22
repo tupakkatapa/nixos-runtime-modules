@@ -66,17 +66,21 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
 The `runtime-module` command is available after enabling the module:
 
 ```bash
-$ runtime-module help
-Usage: runtime-module <action> [<module-name>...]
+$ runtime-module --help
+Usage: runtime-module [OPTIONS] <COMMAND>
 
-Actions:
-  enable <module...>   - Build and enable one or more modules
-  disable <module...>  - Disable one or more specific modules
-  reset                - Disable all modules (revert to base system)
-  status <module...>   - Show module status (enabled/disabled)
-  list                 - List all available modules
-  help                 - Show this help message
+Commands:
+  enable   Build and enable one or more modules
+  disable  Disable one or more specific modules
+  reset    Disable all modules (revert to base system)
+  status   Show module status (enabled/disabled)
+  list     List all available modules
 
+Options:
+  -j, --json     Output results in JSON format
+  -f, --force    Force rebuild even if no changes are detected
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 ## How It Works
