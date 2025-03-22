@@ -15,6 +15,10 @@ const MODULES_FILE: &str = "/run/runtime-modules/runtime-modules.nix";
 #[derive(Parser)]
 #[command(author, version, about, long_about = None, disable_help_subcommand = true)]
 struct Cli {
+    /// Output results in JSON format
+    #[arg(short = 'j', long)]
+    json: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -57,13 +61,20 @@ struct Module {
     path: String,
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+struct ModuleStatus {
+    name: String,
+    path: String,
+    enabled: bool,
+}
+
 fn main() {
     // Parse command line arguments
     let cli = Cli::parse();
 
     // Call the appropriate command handler
     match &cli.command {
-        Commands::List => cmd_list(),
+        Commands::List => cmd_list(cli.json),
         Commands::Reset => {
             require_sudo("reset", &[]);
             cmd_reset();
@@ -80,7 +91,7 @@ fn main() {
         }
         Commands::Status { modules } => {
             verify_modules(modules);
-            cmd_status(modules);
+            cmd_status(modules, cli.json);
         }
     }
 }
@@ -124,7 +135,7 @@ fn verify_modules(modules: &[String]) {
     for module in modules {
         if !available_modules.contains(module) {
             eprintln!("error: module '{module}' not found");
-            cmd_list();
+            cmd_list(false);
             exit(1);
         }
     }
@@ -281,17 +292,39 @@ fn apply_configuration() -> bool {
 }
 
 // Command implementations
-fn cmd_list() {
-    println!("Available modules:");
-
+fn cmd_list(json_output: bool) {
     let registry = load_modules_registry();
 
-    for module in registry.modules {
-        let name = &module.name;
-        if is_module_enabled(name) {
-            println!("  [✓] {name}");
-        } else {
-            println!("  [ ] {name}");
+    if json_output {
+        // Create a list of modules with enabled status
+        let modules_with_status: Vec<ModuleStatus> = registry
+            .modules
+            .iter()
+            .map(|module| {
+                let name = &module.name;
+                let enabled = is_module_enabled(name);
+                ModuleStatus {
+                    name: name.clone(),
+                    path: module.path.clone(),
+                    enabled,
+                }
+            })
+            .collect();
+
+        // Output as JSON
+        let json = serde_json::to_string_pretty(&modules_with_status)
+            .expect("failed to serialize modules to JSON");
+        println!("{json}");
+    } else {
+        println!("Available modules:");
+
+        for module in registry.modules {
+            let name = &module.name;
+            if is_module_enabled(name) {
+                println!("  [✓] {name}");
+            } else {
+                println!("  [ ] {name}");
+            }
         }
     }
 }
@@ -378,15 +411,40 @@ fn cmd_disable(modules: &[String]) {
     }
 }
 
-fn cmd_status(modules: &[String]) {
+fn cmd_status(modules: &[String], json_output: bool) {
     let mut exit_code = 0;
 
-    for module in modules {
-        if is_module_enabled(module) {
-            println!("{module}: enabled");
-        } else {
-            println!("{module}: disabled");
-            exit_code = 1;
+    if json_output {
+        let status_list: Vec<_> = modules
+            .iter()
+            .map(|module| {
+                let enabled = is_module_enabled(module);
+                if !enabled {
+                    exit_code = 1;
+                }
+
+                let path = get_module_path(module).unwrap_or_default();
+
+                ModuleStatus {
+                    name: module.clone(),
+                    path,
+                    enabled,
+                }
+            })
+            .collect();
+
+        // Output as JSON
+        let json =
+            serde_json::to_string_pretty(&status_list).expect("failed to serialize status to JSON");
+        println!("{json}");
+    } else {
+        for module in modules {
+            if is_module_enabled(module) {
+                println!("enabled");
+            } else {
+                println!("disabled");
+                exit_code = 1;
+            }
         }
     }
 

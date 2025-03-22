@@ -67,7 +67,7 @@ The `runtime-module` command is available after enabling the module:
 
 ```bash
 $ runtime-module --help
-Usage: runtime-module <COMMAND>
+Usage: runtime-module [OPTIONS] <COMMAND>
 
 Commands:
   enable   Build and enable one or more modules
@@ -77,6 +77,7 @@ Commands:
   list     List all available modules
 
 Options:
+  -j, --json     Output results in JSON format
   -h, --help     Print help
   -V, --version  Print version
 ```
