@@ -67,16 +67,16 @@ The `runtime-module` command is available after enabling the module:
 
 ```bash
 $ runtime-module help
-Usage: runtime-module <action>
-   or: runtime-module <action> <module-name>
+Usage: runtime-module <action> [<module-name>...]
 
 Actions:
-  enable <module>   - Build and enable the module
-  disable <module>  - Disable specific module
-  reset             - Disable all modules (revert to base system)
-  status <module>   - Show module status (enabled/disabled)
-  list              - List all available modules
-  help              - Show this help message
+  enable <module...>   - Build and enable one or more modules
+  disable <module...>  - Disable one or more specific modules
+  reset                - Disable all modules (revert to base system)
+  status <module...>   - Show module status (enabled/disabled)
+  list                 - List all available modules
+  help                 - Show this help message
+
 ```
 
 ## How It Works
