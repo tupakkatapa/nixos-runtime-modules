@@ -310,21 +310,30 @@ fn cmd_enable(modules: &[String]) {
     // Get current enabled modules
     let mut active_modules = get_active_modules();
 
+    // Track if any changes are needed
+    let mut changes_needed = false;
+
     // Process each module
     for module in modules {
         if is_module_enabled(module) {
             println!("module {module} is already enabled");
         } else {
             active_modules.push(module.clone());
+            changes_needed = true;
         }
     }
 
-    // Generate modules file with updated modules list
-    generate_modules_file(&active_modules);
+    // Only rebuild if there were changes
+    if changes_needed {
+        // Generate modules file with updated modules list
+        generate_modules_file(&active_modules);
 
-    // Apply the configuration
-    apply_configuration();
-    println!("modules enabled successfully");
+        // Apply the configuration
+        apply_configuration();
+        println!("modules enabled successfully");
+    } else {
+        println!("no changes needed, skipping rebuild");
+    }
 }
 
 fn cmd_disable(modules: &[String]) {
@@ -337,9 +346,13 @@ fn cmd_disable(modules: &[String]) {
     // Create new list excluding modules being disabled
     let mut new_enabled_modules = Vec::new();
 
+    // Track if any changes are needed
+    let mut changes_needed = false;
+
     for module in &active_modules {
         if disable_set.contains(module) {
             println!("disabling module {module}...");
+            changes_needed = true;
         } else {
             new_enabled_modules.push(module.clone());
         }
@@ -352,12 +365,17 @@ fn cmd_disable(modules: &[String]) {
         }
     }
 
-    // Generate modules file with updated modules list
-    generate_modules_file(&new_enabled_modules);
+    // Only rebuild if there were changes
+    if changes_needed {
+        // Generate modules file with updated modules list
+        generate_modules_file(&new_enabled_modules);
 
-    // Apply the configuration
-    apply_configuration();
-    println!("modules disabled successfully");
+        // Apply the configuration
+        apply_configuration();
+        println!("modules disabled successfully");
+    } else {
+        println!("no changes needed, skipping rebuild");
+    }
 }
 
 fn cmd_status(modules: &[String]) {
