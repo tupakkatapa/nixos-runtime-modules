@@ -6,7 +6,7 @@ use std::process::{exit, Command};
 const SYSTEM_MODULES_DIR: &str = "/run/runtime-modules";
 
 // Ensure we have sudo access when needed
-pub fn require_sudo(action: &str, args: &[String]) {
+pub fn require_sudo(action: &str, args: &[String], force: bool) {
     if unsafe { libc::geteuid() } != 0 {
         println!("info: elevated privileges are required for this action");
 
@@ -15,7 +15,14 @@ pub fn require_sudo(action: &str, args: &[String]) {
         let program_path = program.to_str().unwrap_or("runtime-module");
 
         // Prepare arguments for sudo command
-        let mut sudo_args = vec![program_path, action];
+        let mut sudo_args = vec![program_path];
+
+        // Add force flag if requested
+        if force {
+            sudo_args.push("--force");
+        }
+
+        sudo_args.push(action);
         sudo_args.extend(args.iter().map(String::as_str));
 
         // Execute sudo with the current program

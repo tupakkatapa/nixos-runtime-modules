@@ -78,6 +78,7 @@ Commands:
 
 Options:
   -j, --json     Output results in JSON format
+  -f, --force    Force rebuild even if no changes are detected
   -h, --help     Print help
   -V, --version  Print version
 ```

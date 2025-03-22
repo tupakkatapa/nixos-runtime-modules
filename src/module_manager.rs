@@ -58,7 +58,7 @@ impl ModuleManager {
     }
 
     // Enable modules and apply changes
-    pub fn enable_modules(&mut self, modules: &[String]) -> Result<bool, ModuleError> {
+    pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<bool, ModuleError> {
         // Display status for modules that are already enabled
         for module in modules {
             if self.module_file.is_module_enabled(module) {
@@ -69,8 +69,8 @@ impl ModuleManager {
         // Enable the specified modules
         let changes = self.module_file.enable_modules(modules);
 
-        // If changes were made, save and apply
-        if changes {
+        // If changes were made or force flag is set, save and apply
+        if changes || force {
             self.module_file.save(MODULES_FILE, &self.registry)?;
             println!("generated modules file at '{MODULES_FILE}'");
 
@@ -86,7 +86,11 @@ impl ModuleManager {
     }
 
     // Disable modules and apply changes
-    pub fn disable_modules(&mut self, modules: &[String]) -> Result<bool, ModuleError> {
+    pub fn disable_modules(
+        &mut self,
+        modules: &[String],
+        force: bool,
+    ) -> Result<bool, ModuleError> {
         // Display status for each module
         for module in modules {
             if self.module_file.is_module_enabled(module) {
@@ -99,8 +103,8 @@ impl ModuleManager {
         // Disable the specified modules
         let changes = self.module_file.disable_modules(modules);
 
-        // If changes were made, save and apply
-        if changes {
+        // If changes were made or force flag is set, save and apply
+        if changes || force {
             self.module_file.save(MODULES_FILE, &self.registry)?;
             println!("generated modules file at '{MODULES_FILE}'");
 
@@ -116,8 +120,15 @@ impl ModuleManager {
     }
 
     // Reset to base system (disable all modules)
-    pub fn reset(&mut self) -> Result<(), ModuleError> {
+    pub fn reset(&mut self, force: bool) -> Result<(), ModuleError> {
         println!("resetting to base system...");
+
+        // If we already have an empty state and force is false, skip
+        if self.module_file.active_modules.is_empty() && !force {
+            println!("system already at base state, skipping rebuild");
+            return Ok(());
+        }
+
         self.module_file = ModuleFile::empty();
         self.module_file.save(MODULES_FILE, &self.registry)?;
         println!("generated modules file at '{MODULES_FILE}'");

@@ -13,6 +13,10 @@ pub struct Cli {
     #[arg(short = 'j', long)]
     pub json: bool,
 
+    /// Force rebuild even if no changes are detected
+    #[arg(short = 'f', long)]
+    pub force: bool,
+
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -48,18 +52,18 @@ pub fn execute_command(cli: &Cli) -> Result<(), ModuleError> {
     match &cli.command {
         Commands::List => cmd_list(cli.json),
         Commands::Reset => {
-            require_sudo("reset", &[]);
-            cmd_reset()
+            require_sudo("reset", &[], cli.force);
+            cmd_reset(cli.force)
         }
         Commands::Enable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("enable", modules);
-            cmd_enable(modules)
+            require_sudo("enable", modules, cli.force);
+            cmd_enable(modules, cli.force)
         }
         Commands::Disable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("disable", modules);
-            cmd_disable(modules)
+            require_sudo("disable", modules, cli.force);
+            cmd_disable(modules, cli.force)
         }
         Commands::Status { modules } => {
             cmd_verify_modules(modules)?;
@@ -105,20 +109,20 @@ fn cmd_list(json_output: bool) -> Result<(), ModuleError> {
     Ok(())
 }
 
-fn cmd_reset() -> Result<(), ModuleError> {
+fn cmd_reset(force: bool) -> Result<(), ModuleError> {
     let mut manager = ModuleManager::new()?;
-    manager.reset()
+    manager.reset(force)
 }
 
-fn cmd_enable(modules: &[String]) -> Result<(), ModuleError> {
+fn cmd_enable(modules: &[String], force: bool) -> Result<(), ModuleError> {
     let mut manager = ModuleManager::new()?;
-    manager.enable_modules(modules)?;
+    manager.enable_modules(modules, force)?;
     Ok(())
 }
 
-fn cmd_disable(modules: &[String]) -> Result<(), ModuleError> {
+fn cmd_disable(modules: &[String], force: bool) -> Result<(), ModuleError> {
     let mut manager = ModuleManager::new()?;
-    manager.disable_modules(modules)?;
+    manager.disable_modules(modules, force)?;
     Ok(())
 }
 
