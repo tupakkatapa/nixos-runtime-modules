@@ -90,7 +90,7 @@ in
 
       # Write the modules.json file
       echo '${modulesJson}' > ${dataDir}/modules.json
-      chmod 644 ${dataDir}/modules.json
+      chmod 755 ${dataDir}/modules.json
 
       # Auto-reset state if not running on a runtime-modules system
       if [ ! -f "/etc/runtime-modules-enabled" ]; then
