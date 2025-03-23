@@ -13,11 +13,11 @@ A modular system for dynamically enabling and disabling NixOS configurations at 
 
 ### Why not use Specialisations?
 
-While [NixOS specialisations](https://nixos.wiki/wiki/Specialisation) might seem like the perfect solution, they don't actually reduce your base image size. The key issue is that NixOS prepares the initrd to potentially boot into any of your specialisations without requiring a rebuild, so it must include all the components, not reducing the base size at all.
+While [NixOS specialisations](https://nixos.wiki/wiki/Specialisation) might seem like the perfect solution, they don't actually reduce your base image size. The key issue is that NixOS prepares the initrd to potentially boot into any of your specialisations without requiring a rebuild, so it must include all the components.
 
 ## How It Works
 
-The system creates a temporary flake extending your base configuration with the specified modules. It maintains a runtime state in `/run/runtime-modules/` that tracks which modules are active. When you enable or disable modules, it updates this state and applies the changes using `nixos-rebuild test`, allowing you to dynamically reconfigure your system without permanently changing your boot image.
+The system creates a temporary flake extending your base configuration with the specified modules. It maintains a runtime state in `/run/runtime-modules/` that tracks which modules are active. When you enable or disable modules, it updates this state and applies the changes using `nixos-rebuild test`.
 
 ## Getting Started
 
