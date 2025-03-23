@@ -1,6 +1,6 @@
 # NixOS Runtime Modules
 
-A modular system for dynamically enabling and disabling NixOS configurations at runtime with a simole CLI. It allows you to keep your base system configuration small while dynamically enabling and disabling heavier components as needed. This is especially useful when you need to keep your initrd + kernel size under a specific limit.
+A modular system for dynamically enabling and disabling NixOS configurations at runtime with a simple CLI. It allows you to keep your base system configuration small while dynamically enabling and disabling heavier components as needed. This is especially useful when you need to keep your initrd + kernel size under a specific limit.
 
 ## Getting Started
 
