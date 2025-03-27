@@ -74,10 +74,8 @@ impl ModuleManager {
             self.module_file.save(MODULES_FILE, &self.registry)?;
             println!("generated modules file at '{MODULES_FILE}'");
 
-            let success = apply_configuration();
-            if success {
-                println!("modules enabled successfully");
-            }
+            apply_configuration()?;
+            println!("modules enabled successfully");
         } else {
             println!("no changes needed, skipping rebuild");
         }
@@ -108,10 +106,8 @@ impl ModuleManager {
             self.module_file.save(MODULES_FILE, &self.registry)?;
             println!("generated modules file at '{MODULES_FILE}'");
 
-            let success = apply_configuration();
-            if success {
-                println!("modules disabled successfully");
-            }
+            apply_configuration()?;
+            println!("modules disabled successfully");
         } else {
             println!("no changes needed, skipping rebuild");
         }
@@ -133,12 +129,36 @@ impl ModuleManager {
         self.module_file.save(MODULES_FILE, &self.registry)?;
         println!("generated modules file at '{MODULES_FILE}'");
 
-        apply_configuration();
+        apply_configuration()?;
+        println!("system reset successfully");
         Ok(())
     }
 
     // Verify that modules exist in the registry
     pub fn verify_modules_exist(&self, modules: &[String]) -> bool {
         self.registry.verify_modules_exist(modules)
+    }
+
+    // Rebuild the system with currently enabled modules
+    pub fn rebuild(&self, force: bool) -> Result<(), ModuleError> {
+        if self.module_file.active_modules.is_empty() && !force {
+            println!("no active modules to rebuild");
+            return Ok(());
+        }
+
+        println!("rebuilding system with current modules:");
+
+        // Display currently enabled modules
+        if self.module_file.active_modules.is_empty() {
+            println!("  (base system only)");
+        } else {
+            for module in &self.module_file.active_modules {
+                println!("  - {module}");
+            }
+        }
+
+        apply_configuration()?;
+        println!("system rebuilt successfully");
+        Ok(())
     }
 }

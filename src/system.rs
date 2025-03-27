@@ -1,3 +1,4 @@
+use runtime_module::ModuleError;
 use std::env;
 use std::path::Path;
 use std::process::{exit, Command};
@@ -36,13 +37,14 @@ pub fn require_sudo(action: &str, args: &[String], force: bool) {
 }
 
 // Apply the current configuration
-pub fn apply_configuration() -> bool {
+pub fn apply_configuration() -> Result<(), ModuleError> {
     println!("applying configuration...");
 
     // Change to the system modules directory
     if let Err(e) = env::set_current_dir(SYSTEM_MODULES_DIR) {
-        eprintln!("failed to change to system modules directory: {e}");
-        return false;
+        let msg = format!("failed to change to system modules directory: {e}");
+        eprintln!("{msg}");
+        return Err(ModuleError::RebuildError(msg));
     }
 
     // Update flake before rebuild
@@ -54,10 +56,12 @@ pub fn apply_configuration() -> bool {
     match update_status {
         Ok(status) if !status.success() => {
             eprintln!("warning: flake update returned non-zero status");
+            // We continue despite warnings from flake update
         }
         Err(e) => {
-            eprintln!("failed to run nix flake update: {e}");
-            return false;
+            let msg = format!("failed to run nix flake update: {e}");
+            eprintln!("{msg}");
+            return Err(ModuleError::RebuildError(msg));
         }
         _ => {}
     }
@@ -73,19 +77,19 @@ pub fn apply_configuration() -> bool {
 
     match Command::new("nixos-rebuild").args(rebuild_args).status() {
         Ok(status) => {
-            let success = status.success();
-            if success {
+            if status.success() {
                 println!("configuration applied successfully");
+                Ok(())
             } else {
-                println!(
-                    "warning: configuration applied with warnings (some changes may not be fully applied)"
-                );
+                let msg = "warning: configuration applied with warnings (some changes may not be fully applied)".to_string();
+                println!("{msg}");
+                Err(ModuleError::RebuildError(msg))
             }
-            success
         }
         Err(e) => {
-            eprintln!("failed to run nixos-rebuild: {e}");
-            false
+            let msg = format!("failed to run nixos-rebuild: {e}");
+            eprintln!("{msg}");
+            Err(ModuleError::RebuildError(msg))
         }
     }
 }

@@ -11,6 +11,7 @@ pub enum ModuleError {
     IoError(std::io::Error),
     ParseError(String),
     ModuleNotFound(String),
+    RebuildError(String),
 }
 
 impl fmt::Display for ModuleError {
@@ -19,6 +20,7 @@ impl fmt::Display for ModuleError {
             ModuleError::IoError(err) => write!(f, "IO error: {err}"),
             ModuleError::ParseError(msg) => write!(f, "Parse error: {msg}"),
             ModuleError::ModuleNotFound(name) => write!(f, "Module not found: {name}"),
+            ModuleError::RebuildError(msg) => write!(f, "Rebuild error: {msg}"),
         }
     }
 }

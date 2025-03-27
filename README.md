@@ -89,6 +89,7 @@ Commands:
   reset    Disable all modules (revert to base system)
   status   Show module status (enabled/disabled)
   list     List all available modules
+  rebuild  Rebuild the system with currently enabled modules
 
 Options:
   -j, --json     Output results in JSON format
@@ -114,4 +115,7 @@ sudo runtime-module disable gaming
 
 # Reset to base system (disable all modules)
 sudo runtime-module reset
+
+# Rebuild the system with currently enabled modules
+sudo runtime-module rebuild
 ```

@@ -45,6 +45,8 @@ pub enum Commands {
     },
     /// List all available modules
     List,
+    /// Rebuild the system with currently enabled modules
+    Rebuild,
 }
 
 // Execute the selected command
@@ -68,6 +70,10 @@ pub fn execute_command(cli: &Cli) -> Result<(), ModuleError> {
         Commands::Status { modules } => {
             cmd_verify_modules(modules)?;
             cmd_status(modules, cli.json)
+        }
+        Commands::Rebuild => {
+            require_sudo("rebuild", &[], cli.force);
+            cmd_rebuild(cli.force)
         }
     }
 }
@@ -151,5 +157,11 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
         exit(1);
     }
 
+    Ok(())
+}
+
+fn cmd_rebuild(force: bool) -> Result<(), ModuleError> {
+    let manager = ModuleManager::new()?;
+    manager.rebuild(force);
     Ok(())
 }
