@@ -79,6 +79,9 @@ in
       moduleManagerRust
     ];
 
+    # Verify that all modules have valid Nix syntax
+    assertions = [{ assertion = lib.all (m: import m.path) cfg.modules; }];
+
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
       echo "[runtime-modules] setting up ${dataDir}..."
