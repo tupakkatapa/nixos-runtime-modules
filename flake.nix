@@ -82,7 +82,7 @@
       flake =
         {
           nixosModules = {
-            runtimeModules.imports = [ ./module.nix ];
+            runtimeModules.imports = [ ./nixosModules ];
             default = self.nixosModules.runtimeModules;
           };
         };

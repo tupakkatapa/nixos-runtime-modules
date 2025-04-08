@@ -5,18 +5,46 @@ let
   dataDir = "/run/runtime-modules";
   modulesNix = "${dataDir}/runtime-modules.nix";
 
+  # Upstream modules
+  libDir = ./rt-modules;
+  rtModules =
+    if (cfg.builtinModules.enable && builtins.pathExists libDir) then
+      let
+        files = builtins.attrNames (builtins.readDir libDir);
+        nixFiles = builtins.filter (f: lib.hasSuffix ".nix" f) files;
+
+        # Simple function to extract description from first line
+        getDescription = file:
+          let
+            content = builtins.readFile (libDir + "/${file}");
+            firstLine = lib.head (lib.splitString "\n" content);
+          in
+          lib.strings.trim (lib.removePrefix "#" firstLine);
+      in
+      map
+        (file: {
+          name = "rt." + (lib.removeSuffix ".nix" file);
+          path = libDir + "/${file}";
+          desc = getDescription file;
+        })
+        nixFiles
+    else
+      [ ];
+
+  # All modules = user modules + upstream modules
+  allModules = cfg.modules ++ rtModules;
+
   # Generate the modules.json content
   modulesJson = builtins.toJSON {
     modules = map
       (module: {
-        inherit (module) name;
-        path = toString module.path;
+        inherit (module) name path desc;
       })
-      cfg.modules;
+      allModules;
   };
 
   # Build the Rust program
-  moduleManagerRust = pkgs.callPackage ./package.nix {
+  moduleManagerRust = pkgs.callPackage ../package.nix {
     inherit (pkgs) rustPlatform nix;
   };
 
@@ -55,6 +83,8 @@ in
       description = "Base flake reference to extend from";
     };
 
+    builtinModules.enable = lib.mkEnableOption "Enable built-in module library";
+
     modules = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
         options = {
@@ -66,6 +96,12 @@ in
           path = lib.mkOption {
             type = lib.types.path;
             description = "Path to the Nix file containing the module configuration";
+          };
+
+          desc = lib.mkOption {
+            type = lib.types.str;
+            default = "";
+            description = "Description of what the module provides";
           };
         };
       });
@@ -80,7 +116,7 @@ in
     ];
 
     # Verify that all modules have valid Nix syntax
-    assertions = [{ assertion = lib.all (m: import m.path) cfg.modules; }];
+    assertions = [{ assertion = lib.all (m: import m.path != null) allModules; }];
 
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
@@ -105,3 +141,4 @@ in
     '';
   };
 }
+

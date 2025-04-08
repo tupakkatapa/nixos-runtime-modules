@@ -1,9 +1,10 @@
 use clap::{Parser, Subcommand};
+use serde::Serialize;
 use std::process::exit;
 
 use crate::module_manager::ModuleManager;
 use crate::system::require_sudo;
-use runtime_module::ModuleError;
+use runtime_module::{ModuleError, ModuleStatus};
 
 // CLI arguments parsing structure
 #[derive(Parser)]
@@ -19,6 +20,13 @@ pub struct Cli {
 
     #[command(subcommand)]
     pub command: Commands,
+}
+
+// Structure for categorized output
+#[derive(Serialize)]
+struct CategorizedModules {
+    user_modules: Vec<ModuleStatus>,
+    upstream_modules: Vec<ModuleStatus>,
 }
 
 #[derive(Subcommand)]
@@ -95,24 +103,72 @@ fn cmd_list(json_output: bool) -> Result<(), ModuleError> {
     let manager = ModuleManager::new()?;
     let modules_with_status = manager.get_all_status();
 
+    // Split modules into rt modules and user modules
+    let (rt_modules, user_modules): (Vec<_>, Vec<_>) = modules_with_status
+        .into_iter()
+        .partition(|status| status.name.starts_with("rt."));
+
     if json_output {
         // Output as JSON
-        let json = serde_json::to_string_pretty(&modules_with_status)
+        let categorized = CategorizedModules {
+            user_modules,
+            upstream_modules: rt_modules,
+        };
+
+        let json = serde_json::to_string_pretty(&categorized)
             .map_err(|e| ModuleError::ParseError(e.to_string()))?;
         println!("{json}");
     } else {
-        println!("Available modules:");
+        // Check if both module lists are empty
+        if user_modules.is_empty() && rt_modules.is_empty() {
+            println!("no modules available");
+            return Ok(());
+        }
 
-        for status in modules_with_status {
-            if status.enabled {
-                println!("  [✓] {}", status.name);
-            } else {
-                println!("  [ ] {}", status.name);
+        // Find the longest module name for alignment
+        let max_name_length = user_modules
+            .iter()
+            .chain(rt_modules.iter())
+            .map(|status| status.name.len())
+            .max()
+            .unwrap_or(0);
+
+        println!("\u{001b}[4mAvailable modules:\u{001b}[0m");
+
+        // Print user modules if any exist
+        if !user_modules.is_empty() {
+            for status in &user_modules {
+                print_module_status(status, max_name_length);
+            }
+            if !rt_modules.is_empty() {
+                println!("\n\u{001b}[4mUpstream modules:\u{001b}[0m");
+            }
+        }
+
+        // Print rt modules if any exist
+        if !rt_modules.is_empty() {
+            for status in &rt_modules {
+                print_module_status(status, max_name_length);
             }
         }
     }
 
     Ok(())
+}
+
+// Helper function to print a module status with proper formatting
+fn print_module_status(status: &ModuleStatus, max_name_length: usize) {
+    let status_marker = if status.enabled { "[✓]" } else { "[ ]" };
+
+    // Create padded name for alignment
+    let padded_name = format!("{:<width$}", status.name, width = max_name_length);
+
+    // Format the output to include description
+    if status.desc.is_empty() {
+        println!("  {status_marker} {padded_name}");
+    } else {
+        println!("  {status_marker} {padded_name}  {}", status.desc);
+    }
 }
 
 fn cmd_reset(force: bool) -> Result<(), ModuleError> {
@@ -162,6 +218,6 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
 
 fn cmd_rebuild(force: bool) -> Result<(), ModuleError> {
     let manager = ModuleManager::new()?;
-    manager.rebuild(force);
+    let _ = manager.rebuild(force);
     Ok(())
 }

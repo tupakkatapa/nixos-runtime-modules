@@ -10,14 +10,17 @@ mod tests {
             Module {
                 name: "test1".to_string(),
                 path: "/path/to/test1".to_string(),
+                desc: String::new(),
             },
             Module {
                 name: "test2".to_string(),
                 path: "/path/to/test2".to_string(),
+                desc: String::new(),
             },
             Module {
                 name: "test3".to_string(),
                 path: "/path/to/test3".to_string(),
+                desc: String::new(),
             },
         ];
 
@@ -48,10 +51,12 @@ mod tests {
             Module {
                 name: "test1".to_string(),
                 path: "/path/to/test1".to_string(),
+                desc: String::new(),
             },
             Module {
                 name: "test2".to_string(),
                 path: "/path/to/test2".to_string(),
+                desc: String::new(),
             },
         ];
 

@@ -45,6 +45,8 @@ pub struct ModuleRegistry {
 pub struct Module {
     pub name: String,
     pub path: String,
+    #[serde(default)]
+    pub desc: String,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -52,6 +54,8 @@ pub struct ModuleStatus {
     pub name: String,
     pub path: String,
     pub enabled: bool,
+    #[serde(default)]
+    pub desc: String,
 }
 
 impl ModuleRegistry {

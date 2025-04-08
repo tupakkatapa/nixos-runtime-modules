@@ -29,12 +29,19 @@ impl ModuleManager {
             .iter()
             .map(|module| {
                 let enabled = self.module_file.is_module_enabled(module);
-                let path = self.registry.get_module_path(module).unwrap_or_default();
+
+                // Find module in registry to get path and desc
+                let registry_module = self.registry.modules.iter().find(|m| &m.name == module);
+
+                let path = registry_module.map(|m| m.path.clone()).unwrap_or_default();
+
+                let desc = registry_module.map(|m| m.desc.clone()).unwrap_or_default();
 
                 ModuleStatus {
                     name: module.clone(),
                     path,
                     enabled,
+                    desc,
                 }
             })
             .collect()
@@ -52,6 +59,7 @@ impl ModuleManager {
                     name: name.clone(),
                     path: module.path.clone(),
                     enabled,
+                    desc: module.desc.clone(),
                 }
             })
             .collect()
