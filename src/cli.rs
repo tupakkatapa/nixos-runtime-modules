@@ -1,10 +1,11 @@
+use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use std::process::exit;
 
 use crate::module_manager::ModuleManager;
 use crate::system::require_sudo;
-use runtime_module::{ModuleError, ModuleState, ModuleStatus};
+use runtime_module::{ModuleState, ModuleStatus};
 
 // CLI arguments parsing structure
 #[derive(Parser)]
@@ -58,21 +59,21 @@ pub enum Commands {
 }
 
 // Execute the selected command
-pub fn execute_command(cli: &Cli) -> Result<(), ModuleError> {
+pub fn execute_command(cli: &Cli) -> Result<()> {
     match &cli.command {
         Commands::List => cmd_list(cli.json),
         Commands::Reset => {
-            require_sudo("reset", &[], cli.force);
+            require_sudo("reset", &[], cli.force)?;
             cmd_reset(cli.force)
         }
         Commands::Enable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("enable", modules, cli.force);
+            require_sudo("enable", modules, cli.force)?;
             cmd_enable(modules, cli.force)
         }
         Commands::Disable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("disable", modules, cli.force);
+            require_sudo("disable", modules, cli.force)?;
             cmd_disable(modules, cli.force)
         }
         Commands::Status { modules } => {
@@ -80,15 +81,16 @@ pub fn execute_command(cli: &Cli) -> Result<(), ModuleError> {
             cmd_status(modules, cli.json)
         }
         Commands::Rebuild => {
-            require_sudo("rebuild", &[], cli.force);
+            require_sudo("rebuild", &[], cli.force)?;
             cmd_rebuild(cli.force)
         }
     }
 }
 
 // Command implementations
-fn cmd_verify_modules(modules: &[String]) -> Result<(), ModuleError> {
-    let manager = ModuleManager::new()?;
+fn cmd_verify_modules(modules: &[String]) -> Result<()> {
+    let manager = ModuleManager::new()
+        .context("failed to initialize module manager while verifying modules")?;
 
     if !manager.verify_modules_exist(modules) {
         eprintln!("error: one or more modules not found");
@@ -99,8 +101,9 @@ fn cmd_verify_modules(modules: &[String]) -> Result<(), ModuleError> {
     Ok(())
 }
 
-fn cmd_list(json_output: bool) -> Result<(), ModuleError> {
-    let manager = ModuleManager::new()?;
+fn cmd_list(json_output: bool) -> Result<()> {
+    let manager = ModuleManager::new()
+        .context("failed to initialize module manager while listing modules")?;
     let modules_with_status = manager.get_all_status();
 
     // Split modules into rt modules and user modules
@@ -116,7 +119,7 @@ fn cmd_list(json_output: bool) -> Result<(), ModuleError> {
         };
 
         let json = serde_json::to_string_pretty(&categorized)
-            .map_err(|e| ModuleError::ParseError(e.to_string()))?;
+            .context("failed to serialize module list to JSON")?;
         println!("{json}");
     } else {
         // Check if both module lists are empty
@@ -175,25 +178,33 @@ fn print_module_status(status: &ModuleStatus, max_name_length: usize) {
     }
 }
 
-fn cmd_reset(force: bool) -> Result<(), ModuleError> {
-    let mut manager = ModuleManager::new()?;
-    manager.reset(force)
+fn cmd_reset(force: bool) -> Result<()> {
+    let mut manager =
+        ModuleManager::new().context("failed to initialize module manager for reset")?;
+    manager.reset(force).context("failed to reset modules")
 }
 
-fn cmd_enable(modules: &[String], force: bool) -> Result<(), ModuleError> {
-    let mut manager = ModuleManager::new()?;
-    manager.enable_modules(modules, force)?;
+fn cmd_enable(modules: &[String], force: bool) -> Result<()> {
+    let mut manager =
+        ModuleManager::new().context("failed to initialize module manager for enabling modules")?;
+    manager
+        .enable_modules(modules, force)
+        .with_context(|| format!("failed to enable modules: {modules:?}"))?;
     Ok(())
 }
 
-fn cmd_disable(modules: &[String], force: bool) -> Result<(), ModuleError> {
-    let mut manager = ModuleManager::new()?;
-    manager.disable_modules(modules, force)?;
+fn cmd_disable(modules: &[String], force: bool) -> Result<()> {
+    let mut manager = ModuleManager::new()
+        .context("failed to initialize module manager for disabling modules")?;
+    manager
+        .disable_modules(modules, force)
+        .with_context(|| format!("failed to disable modules: {modules:?}"))?;
     Ok(())
 }
 
-fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> {
-    let manager = ModuleManager::new()?;
+fn cmd_status(modules: &[String], json_output: bool) -> Result<()> {
+    let manager =
+        ModuleManager::new().context("failed to initialize module manager for checking status")?;
     let status_list = manager.get_status(modules);
     let not_fully_enabled = status_list
         .iter()
@@ -202,7 +213,7 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
     if json_output {
         // Output as JSON
         let json = serde_json::to_string_pretty(&status_list)
-            .map_err(|e| ModuleError::ParseError(e.to_string()))?;
+            .context("failed to serialize module status to JSON")?;
         println!("{json}");
     } else {
         for status in &status_list {
@@ -222,8 +233,8 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
     Ok(())
 }
 
-fn cmd_rebuild(force: bool) -> Result<(), ModuleError> {
-    let mut manager = ModuleManager::new()?;
-    manager.rebuild(force)?;
-    Ok(())
+fn cmd_rebuild(force: bool) -> Result<()> {
+    let mut manager =
+        ModuleManager::new().context("failed to initialize module manager for rebuild")?;
+    manager.rebuild(force).context("failed to rebuild system")
 }

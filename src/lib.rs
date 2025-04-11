@@ -1,37 +1,8 @@
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
-use std::fmt;
 use std::fs;
 use std::path::Path;
-
-// Custom error type for better error handling
-#[derive(Debug)]
-pub enum ModuleError {
-    IoError(std::io::Error),
-    ParseError(String),
-    ModuleNotFound(String),
-    RebuildError(String),
-}
-
-impl fmt::Display for ModuleError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ModuleError::IoError(err) => write!(f, "IO error: {err}"),
-            ModuleError::ParseError(msg) => write!(f, "Parse error: {msg}"),
-            ModuleError::ModuleNotFound(name) => write!(f, "Module not found: {name}"),
-            ModuleError::RebuildError(msg) => write!(f, "Rebuild error: {msg}"),
-        }
-    }
-}
-
-impl Error for ModuleError {}
-
-impl From<std::io::Error> for ModuleError {
-    fn from(err: std::io::Error) -> Self {
-        ModuleError::IoError(err)
-    }
-}
 
 // Module state enum
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
@@ -84,10 +55,13 @@ impl ModuleRegistry {
     /// # Errors
     ///
     /// Returns an error if the file cannot be read or if it contains invalid JSON.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ModuleError> {
-        let json_content = fs::read_to_string(path)?;
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path_str = path.as_ref().to_string_lossy();
+        let json_content = fs::read_to_string(&path)
+            .with_context(|| format!("failed to read registry from {path_str}"))?;
+
         let mut registry: ModuleRegistry = serde_json::from_str(&json_content)
-            .map_err(|e| ModuleError::ParseError(e.to_string()))?;
+            .with_context(|| format!("failed to parse JSON from {path_str}"))?;
 
         // Initialize lookup map for efficiency
         registry.init_lookup();
@@ -99,18 +73,24 @@ impl ModuleRegistry {
     /// # Errors
     ///
     /// Returns an error if the file cannot be written or if the JSON serialization fails.
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), ModuleError> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path_str = path.as_ref().to_string_lossy();
         let content = serde_json::to_string_pretty(&self)
-            .map_err(|e| ModuleError::ParseError(e.to_string()))?;
-        fs::write(&path, content)?;
+            .with_context(|| "failed to serialize registry to JSON")?;
+
+        fs::write(&path, content)
+            .with_context(|| format!("failed to write registry to {path_str}"))?;
 
         // Fix permissions - set to 644 (rw-r--r--)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path)?.permissions();
+            let mut perms = fs::metadata(&path)
+                .with_context(|| format!("failed to get metadata for {path_str}"))?
+                .permissions();
             perms.set_mode(0o644);
-            fs::set_permissions(&path, perms)?;
+            fs::set_permissions(&path, perms)
+                .with_context(|| format!("failed to set permissions for {path_str}"))?;
         }
 
         Ok(())
@@ -241,15 +221,20 @@ impl ModuleFile {
     /// # Errors
     ///
     /// Returns an error if the file cannot be read.
-    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self, ModuleError> {
-        if !path.as_ref().exists() {
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let path_ref = path.as_ref();
+
+        if !path_ref.exists() {
             return Ok(Self {
                 active_modules: Vec::new(),
                 content: None,
             });
         }
 
-        let content = fs::read_to_string(path)?;
+        let path_str = path_ref.to_string_lossy();
+        let content = fs::read_to_string(path_ref)
+            .with_context(|| format!("failed to read module file from {path_str}"))?;
+
         let active_modules = Self::parse_active_modules(&content);
 
         Ok(Self {
@@ -369,21 +354,24 @@ impl ModuleFile {
     /// # Errors
     ///
     /// Returns an error if the file cannot be written or permissions cannot be set.
-    pub fn save<P: AsRef<Path>>(
-        &self,
-        path: P,
-        registry: &ModuleRegistry,
-    ) -> Result<(), ModuleError> {
+    pub fn save<P: AsRef<Path>>(&self, path: P, registry: &ModuleRegistry) -> Result<()> {
+        let path_ref = path.as_ref();
+        let path_str = path_ref.to_string_lossy();
+
         let content = self.generate_content(registry);
-        fs::write(&path, &content)?;
+        fs::write(path_ref, &content)
+            .with_context(|| format!("failed to write module file to {path_str}"))?;
 
         // Fix permissions - set to 644 (rw-r--r--)
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path)?.permissions();
+            let mut perms = fs::metadata(path_ref)
+                .with_context(|| format!("failed to get metadata for {path_str}"))?
+                .permissions();
             perms.set_mode(0o644);
-            fs::set_permissions(&path, perms)?;
+            fs::set_permissions(path_ref, perms)
+                .with_context(|| format!("failed to set permissions for {path_str}"))?;
         }
 
         Ok(())

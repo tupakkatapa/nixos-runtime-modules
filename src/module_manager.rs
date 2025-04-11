@@ -1,5 +1,6 @@
 use crate::system::apply_configuration;
-use runtime_module::{ModuleError, ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
+use anyhow::{Context, Result};
+use runtime_module::{ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
@@ -13,9 +14,11 @@ pub struct ModuleManager {
 
 impl ModuleManager {
     // Initialize the manager by loading registry and module file
-    pub fn new() -> Result<Self, ModuleError> {
-        let registry = ModuleRegistry::from_file(MODULES_JSON)?;
-        let module_file = ModuleFile::from_file(MODULES_FILE)?;
+    pub fn new() -> Result<Self> {
+        let registry =
+            ModuleRegistry::from_file(MODULES_JSON).context("failed to load module registry")?;
+        let module_file =
+            ModuleFile::from_file(MODULES_FILE).context("failed to load module file")?;
 
         // Update the registry states based on active modules
         let mut manager = Self {
@@ -108,9 +111,11 @@ impl ModuleManager {
     }
 
     // Apply changes and persist state
-    fn apply_changes(&mut self, force: bool, action_msg: &str) -> Result<(), ModuleError> {
+    fn apply_changes(&mut self, _force: bool, action_msg: &str) -> Result<()> {
         // Save the module file
-        self.module_file.save(MODULES_FILE, &self.registry)?;
+        self.module_file
+            .save(MODULES_FILE, &self.registry)
+            .with_context(|| format!("failed to save module file after {action_msg}"))?;
         println!("generated modules file at '{MODULES_FILE}'");
 
         // Apply configuration
@@ -120,7 +125,9 @@ impl ModuleManager {
                 // Confirm states after successful rebuild
                 self.registry
                     .confirm_states(&self.module_file.active_modules);
-                self.registry.save(MODULES_JSON)?;
+                self.registry
+                    .save(MODULES_JSON)
+                    .context("failed to save registry after successful rebuild")?;
                 Ok(())
             }
             Err(e) => {
@@ -128,14 +135,16 @@ impl ModuleManager {
                 // Mark relevant modules as uncertain
                 self.registry
                     .mark_uncertain(&self.module_file.active_modules);
-                self.registry.save(MODULES_JSON)?;
+                self.registry
+                    .save(MODULES_JSON)
+                    .context("failed to save registry after rebuild failure")?;
                 Err(e)
             }
         }
     }
 
     // Enable modules with state tracking
-    pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<bool, ModuleError> {
+    pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<bool> {
         let mut changes = false;
 
         // Display status and mark modules for change
@@ -172,11 +181,7 @@ impl ModuleManager {
     }
 
     // Disable modules with state tracking
-    pub fn disable_modules(
-        &mut self,
-        modules: &[String],
-        force: bool,
-    ) -> Result<bool, ModuleError> {
+    pub fn disable_modules(&mut self, modules: &[String], force: bool) -> Result<bool> {
         let mut changes = false;
 
         // Display status and mark modules for change
@@ -214,7 +219,7 @@ impl ModuleManager {
     }
 
     // Reset to base system with state tracking
-    pub fn reset(&mut self, force: bool) -> Result<(), ModuleError> {
+    pub fn reset(&mut self, force: bool) -> Result<()> {
         println!("resetting to base system...");
 
         // If we already have an empty state and force is false, skip
@@ -240,7 +245,7 @@ impl ModuleManager {
     }
 
     // Rebuild the system with currently enabled modules
-    pub fn rebuild(&mut self, force: bool) -> Result<(), ModuleError> {
+    pub fn rebuild(&mut self, force: bool) -> Result<()> {
         if self.module_file.active_modules.is_empty() && !force {
             println!("no active modules to rebuild");
             return Ok(());
