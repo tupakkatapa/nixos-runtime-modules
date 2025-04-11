@@ -1,5 +1,5 @@
 use crate::system::apply_configuration;
-use runtime_module::{ModuleError, ModuleFile, ModuleRegistry, ModuleStatus};
+use runtime_module::{ModuleError, ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
@@ -17,10 +17,40 @@ impl ModuleManager {
         let registry = ModuleRegistry::from_file(MODULES_JSON)?;
         let module_file = ModuleFile::from_file(MODULES_FILE)?;
 
-        Ok(Self {
+        // Update the registry states based on active modules
+        let mut manager = Self {
             registry,
             module_file,
-        })
+        };
+
+        // Sync state with module file at initialization
+        manager.sync_registry_with_module_file();
+
+        Ok(manager)
+    }
+
+    // Sync registry state with active modules in module file
+    fn sync_registry_with_module_file(&mut self) {
+        // Make sure modules in the module file are marked as Enabled in the registry
+        for module in &self.module_file.active_modules {
+            if self.registry.get_state(module) != ModuleState::Uncertain {
+                self.registry.set_state(module, ModuleState::Enabled);
+            }
+        }
+    }
+
+    // Helper method to get the effective state of a module
+    fn get_effective_state(&self, module: &str) -> ModuleState {
+        let is_in_config = self.module_file.is_module_enabled(module);
+        let state = self.registry.get_state(module);
+
+        if state == ModuleState::Uncertain {
+            ModuleState::Uncertain
+        } else if is_in_config {
+            ModuleState::Enabled
+        } else {
+            ModuleState::Disabled
+        }
     }
 
     // Get status for specific modules
@@ -28,20 +58,31 @@ impl ModuleManager {
         modules
             .iter()
             .map(|module| {
-                let enabled = self.module_file.is_module_enabled(module);
+                let state = self.get_effective_state(module);
 
-                // Find module in registry to get path and desc
-                let registry_module = self.registry.modules.iter().find(|m| &m.name == module);
+                // Find module in registry for details
+                let module_index = self
+                    .registry
+                    .get_lookup_map()
+                    .and_then(|map| map.get(module))
+                    .copied();
 
-                let path = registry_module.map(|m| m.path.clone()).unwrap_or_default();
-
-                let desc = registry_module.map(|m| m.desc.clone()).unwrap_or_default();
-
-                ModuleStatus {
-                    name: module.clone(),
-                    path,
-                    enabled,
-                    desc,
+                if let Some(index) = module_index {
+                    let registry_module = &self.registry.modules[index];
+                    ModuleStatus {
+                        name: module.clone(),
+                        path: registry_module.path.clone(),
+                        state,
+                        desc: registry_module.desc.clone(),
+                    }
+                } else {
+                    // Fallback if module not found
+                    ModuleStatus {
+                        name: module.clone(),
+                        path: String::new(),
+                        state,
+                        desc: String::new(),
+                    }
                 }
             })
             .collect()
@@ -54,36 +95,75 @@ impl ModuleManager {
             .iter()
             .map(|module| {
                 let name = &module.name;
-                let enabled = self.module_file.is_module_enabled(name);
+                let state = self.get_effective_state(name);
+
                 ModuleStatus {
                     name: name.clone(),
                     path: module.path.clone(),
-                    enabled,
+                    state,
                     desc: module.desc.clone(),
                 }
             })
             .collect()
     }
 
-    // Enable modules and apply changes
+    // Apply changes and persist state
+    fn apply_changes(&mut self, force: bool, action_msg: &str) -> Result<(), ModuleError> {
+        // Save the module file
+        self.module_file.save(MODULES_FILE, &self.registry)?;
+        println!("generated modules file at '{MODULES_FILE}'");
+
+        // Apply configuration
+        match apply_configuration() {
+            Ok(()) => {
+                println!("{action_msg} successfully");
+                // Confirm states after successful rebuild
+                self.registry
+                    .confirm_states(&self.module_file.active_modules);
+                self.registry.save(MODULES_JSON)?;
+                Ok(())
+            }
+            Err(e) => {
+                println!("warning: modules in uncertain state due to rebuild failure");
+                // Mark relevant modules as uncertain
+                self.registry
+                    .mark_uncertain(&self.module_file.active_modules);
+                self.registry.save(MODULES_JSON)?;
+                Err(e)
+            }
+        }
+    }
+
+    // Enable modules with state tracking
     pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<bool, ModuleError> {
-        // Display status for modules that are already enabled
+        let mut changes = false;
+
+        // Display status and mark modules for change
         for module in modules {
-            if self.module_file.is_module_enabled(module) {
-                println!("module {module} is already enabled");
+            let current_state = self.get_effective_state(module);
+
+            match current_state {
+                ModuleState::Enabled => {
+                    println!("module {module} is already enabled");
+                }
+                ModuleState::Uncertain => {
+                    println!("warning: module {module} is in an uncertain state");
+                    changes = true;
+                }
+                ModuleState::Disabled => {
+                    self.registry.set_state(module, ModuleState::Uncertain);
+                    changes = true;
+                }
             }
         }
 
-        // Enable the specified modules
-        let changes = self.module_file.enable_modules(modules);
+        // Update the module file
+        let file_changes = self.module_file.enable_modules(modules);
+        changes = changes || file_changes;
 
-        // If changes were made or force flag is set, save and apply
+        // If changes were made or force is set, apply them
         if changes || force {
-            self.module_file.save(MODULES_FILE, &self.registry)?;
-            println!("generated modules file at '{MODULES_FILE}'");
-
-            apply_configuration()?;
-            println!("modules enabled successfully");
+            self.apply_changes(force, "modules enabled")?;
         } else {
             println!("no changes needed, skipping rebuild");
         }
@@ -91,31 +171,41 @@ impl ModuleManager {
         Ok(changes)
     }
 
-    // Disable modules and apply changes
+    // Disable modules with state tracking
     pub fn disable_modules(
         &mut self,
         modules: &[String],
         force: bool,
     ) -> Result<bool, ModuleError> {
-        // Display status for each module
+        let mut changes = false;
+
+        // Display status and mark modules for change
         for module in modules {
-            if self.module_file.is_module_enabled(module) {
-                println!("disabling module {module}...");
-            } else {
-                println!("module {module} is already disabled");
+            let current_state = self.get_effective_state(module);
+
+            match current_state {
+                ModuleState::Enabled => {
+                    println!("disabling module {module}...");
+                    self.registry.set_state(module, ModuleState::Uncertain);
+                    changes = true;
+                }
+                ModuleState::Uncertain => {
+                    println!("warning: module {module} is in an uncertain state");
+                    changes = true;
+                }
+                ModuleState::Disabled => {
+                    println!("module {module} is already disabled");
+                }
             }
         }
 
-        // Disable the specified modules
-        let changes = self.module_file.disable_modules(modules);
+        // Update the module file
+        let file_changes = self.module_file.disable_modules(modules);
+        changes = changes || file_changes;
 
-        // If changes were made or force flag is set, save and apply
+        // If changes were made or force is set, apply them
         if changes || force {
-            self.module_file.save(MODULES_FILE, &self.registry)?;
-            println!("generated modules file at '{MODULES_FILE}'");
-
-            apply_configuration()?;
-            println!("modules disabled successfully");
+            self.apply_changes(force, "modules disabled")?;
         } else {
             println!("no changes needed, skipping rebuild");
         }
@@ -123,7 +213,7 @@ impl ModuleManager {
         Ok(changes)
     }
 
-    // Reset to base system (disable all modules)
+    // Reset to base system with state tracking
     pub fn reset(&mut self, force: bool) -> Result<(), ModuleError> {
         println!("resetting to base system...");
 
@@ -133,13 +223,15 @@ impl ModuleManager {
             return Ok(());
         }
 
-        self.module_file = ModuleFile::empty();
-        self.module_file.save(MODULES_FILE, &self.registry)?;
-        println!("generated modules file at '{MODULES_FILE}'");
+        // Mark all active modules as uncertain
+        self.registry
+            .mark_uncertain(&self.module_file.active_modules);
 
-        apply_configuration()?;
-        println!("system reset successfully");
-        Ok(())
+        // Create empty module file
+        self.module_file = ModuleFile::empty();
+
+        // Apply changes - use the force parameter passed to the method
+        self.apply_changes(force, "system reset")
     }
 
     // Verify that modules exist in the registry
@@ -148,7 +240,7 @@ impl ModuleManager {
     }
 
     // Rebuild the system with currently enabled modules
-    pub fn rebuild(&self, force: bool) -> Result<(), ModuleError> {
+    pub fn rebuild(&mut self, force: bool) -> Result<(), ModuleError> {
         if self.module_file.active_modules.is_empty() && !force {
             println!("no active modules to rebuild");
             return Ok(());
@@ -165,8 +257,7 @@ impl ModuleManager {
             }
         }
 
-        apply_configuration()?;
-        println!("system rebuilt successfully");
-        Ok(())
+        // Apply changes
+        self.apply_changes(force, "system rebuilt")
     }
 }

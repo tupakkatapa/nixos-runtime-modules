@@ -4,7 +4,7 @@ use std::process::exit;
 
 use crate::module_manager::ModuleManager;
 use crate::system::require_sudo;
-use runtime_module::{ModuleError, ModuleStatus};
+use runtime_module::{ModuleError, ModuleState, ModuleStatus};
 
 // CLI arguments parsing structure
 #[derive(Parser)]
@@ -158,7 +158,11 @@ fn cmd_list(json_output: bool) -> Result<(), ModuleError> {
 
 // Helper function to print a module status with proper formatting
 fn print_module_status(status: &ModuleStatus, max_name_length: usize) {
-    let status_marker = if status.enabled { "[✓]" } else { "[ ]" };
+    let status_marker = match status.state {
+        ModuleState::Enabled => "[✓]",
+        ModuleState::Disabled => "[ ]",
+        ModuleState::Uncertain => "[?]",
+    };
 
     // Create padded name for alignment
     let padded_name = format!("{:<width$}", status.name, width = max_name_length);
@@ -191,7 +195,9 @@ fn cmd_disable(modules: &[String], force: bool) -> Result<(), ModuleError> {
 fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> {
     let manager = ModuleManager::new()?;
     let status_list = manager.get_status(modules);
-    let any_disabled = status_list.iter().any(|status| !status.enabled);
+    let not_fully_enabled = status_list
+        .iter()
+        .any(|status| status.state != ModuleState::Enabled);
 
     if json_output {
         // Output as JSON
@@ -200,16 +206,16 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
         println!("{json}");
     } else {
         for status in &status_list {
-            if status.enabled {
-                println!("enabled");
-            } else {
-                println!("disabled");
+            match status.state {
+                ModuleState::Enabled => println!("enabled"),
+                ModuleState::Disabled => println!("disabled"),
+                ModuleState::Uncertain => println!("uncertain"),
             }
         }
     }
 
-    // Exit with non-zero status if any module is disabled
-    if any_disabled {
+    // Exit with non-zero status if any module is not fully enabled
+    if not_fully_enabled {
         exit(1);
     }
 
@@ -217,7 +223,7 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<(), ModuleError> 
 }
 
 fn cmd_rebuild(force: bool) -> Result<(), ModuleError> {
-    let manager = ModuleManager::new()?;
-    let _ = manager.rebuild(force);
+    let mut manager = ModuleManager::new()?;
+    manager.rebuild(force)?;
     Ok(())
 }

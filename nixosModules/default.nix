@@ -39,6 +39,7 @@ let
     modules = map
       (module: {
         inherit (module) name path desc;
+        state = "Disabled";
       })
       allModules;
   };

@@ -33,12 +33,21 @@ impl From<std::io::Error> for ModuleError {
     }
 }
 
+// Module state enum
+#[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
+pub enum ModuleState {
+    Enabled,
+    #[default]
+    Disabled,
+    Uncertain,
+}
+
 // Module data structures
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModuleRegistry {
     pub modules: Vec<Module>,
     #[serde(skip)]
-    module_map: Option<HashMap<String, String>>, // name -> path
+    module_map: Option<HashMap<String, usize>>, // name -> index in modules vector
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -47,13 +56,15 @@ pub struct Module {
     pub path: String,
     #[serde(default)]
     pub desc: String,
+    #[serde(default)]
+    pub state: ModuleState,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModuleStatus {
     pub name: String,
     pub path: String,
-    pub enabled: bool,
+    pub state: ModuleState,
     #[serde(default)]
     pub desc: String,
 }
@@ -83,11 +94,33 @@ impl ModuleRegistry {
         Ok(registry)
     }
 
-    // Initialize the lookup map for efficient path retrieval
+    /// Save registry to file
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written or if the JSON serialization fails.
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<(), ModuleError> {
+        let content = serde_json::to_string_pretty(&self)
+            .map_err(|e| ModuleError::ParseError(e.to_string()))?;
+        fs::write(&path, content)?;
+
+        // Fix permissions - set to 644 (rw-r--r--)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = fs::metadata(&path)?.permissions();
+            perms.set_mode(0o644);
+            fs::set_permissions(&path, perms)?;
+        }
+
+        Ok(())
+    }
+
+    // Initialize the lookup map for efficient module retrieval
     pub fn init_lookup(&mut self) {
         let mut map = HashMap::new();
-        for module in &self.modules {
-            map.insert(module.name.clone(), module.path.clone());
+        for (index, module) in self.modules.iter().enumerate() {
+            map.insert(module.name.clone(), index);
         }
         self.module_map = Some(map);
     }
@@ -96,7 +129,9 @@ impl ModuleRegistry {
     #[must_use]
     pub fn get_module_path(&self, module_name: &str) -> Option<String> {
         if let Some(map) = &self.module_map {
-            map.get(module_name).cloned()
+            if let Some(index) = map.get(module_name) {
+                return Some(self.modules[*index].path.clone());
+            }
         } else {
             // Fallback to linear search if map not initialized
             for module in &self.modules {
@@ -104,7 +139,67 @@ impl ModuleRegistry {
                     return Some(module.path.clone());
                 }
             }
-            None
+        }
+        None
+    }
+
+    // Get module state by name
+    #[must_use]
+    pub fn get_state(&self, module_name: &str) -> ModuleState {
+        if let Some(map) = &self.module_map {
+            if let Some(index) = map.get(module_name) {
+                return self.modules[*index].state.clone();
+            }
+        } else {
+            // Fallback to linear search if map not initialized
+            for module in &self.modules {
+                if module.name == module_name {
+                    return module.state.clone();
+                }
+            }
+        }
+        ModuleState::Disabled // Default if not found
+    }
+
+    // Set module state
+    pub fn set_state(&mut self, module_name: &str, state: ModuleState) -> bool {
+        if let Some(map) = &self.module_map {
+            if let Some(index) = map.get(module_name) {
+                self.modules[*index].state = state;
+                return true;
+            }
+        } else {
+            // Fallback to linear search if map not initialized
+            for module in &mut self.modules {
+                if module.name == module_name {
+                    module.state = state;
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    // Mark modules as uncertain
+    pub fn mark_uncertain(&mut self, modules: &[String]) {
+        for module_name in modules {
+            self.set_state(module_name, ModuleState::Uncertain);
+        }
+    }
+
+    // Confirm states based on active modules
+    pub fn confirm_states(&mut self, active_modules: &[String]) {
+        // Create set of active modules
+        let active_set: HashSet<_> = active_modules.iter().cloned().collect();
+
+        // Update all module states
+        for module in &mut self.modules {
+            let new_state = if active_set.contains(&module.name) {
+                ModuleState::Enabled
+            } else {
+                ModuleState::Disabled
+            };
+            module.state = new_state;
         }
     }
 
@@ -129,7 +224,7 @@ impl ModuleRegistry {
 
     // Getter for lookup map (for testing)
     #[must_use]
-    pub fn get_lookup_map(&self) -> Option<&HashMap<String, String>> {
+    pub fn get_lookup_map(&self) -> Option<&HashMap<String, usize>> {
         self.module_map.as_ref()
     }
 }
@@ -180,7 +275,7 @@ impl ModuleFile {
         // Extract module names from nix store path lines
         for line in content.lines() {
             let line = line.trim();
-            if line.contains("/nix/store/") && line.contains("-source/") {
+            if line.contains("/nix/store/") && line.contains(".nix") {
                 if let Some(comment_pos) = line.find('#') {
                     let comment_part = &line[comment_pos + 1..];
                     let module_name = comment_part.trim();

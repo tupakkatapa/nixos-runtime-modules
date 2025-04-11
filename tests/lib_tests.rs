@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use runtime_module::{Module, ModuleError, ModuleFile, ModuleRegistry};
+    use runtime_module::{Module, ModuleError, ModuleFile, ModuleRegistry, ModuleState};
     use std::io::{self, Write};
     use tempfile::NamedTempFile;
 
@@ -11,16 +11,19 @@ mod tests {
                 name: "test1".to_string(),
                 path: "/path/to/test1".to_string(),
                 desc: String::new(),
+                state: ModuleState::Disabled,
             },
             Module {
                 name: "test2".to_string(),
                 path: "/path/to/test2".to_string(),
                 desc: String::new(),
+                state: ModuleState::Disabled,
             },
             Module {
                 name: "test3".to_string(),
                 path: "/path/to/test3".to_string(),
                 desc: String::new(),
+                state: ModuleState::Disabled,
             },
         ];
 
@@ -52,11 +55,13 @@ mod tests {
                 name: "test1".to_string(),
                 path: "/path/to/test1".to_string(),
                 desc: String::new(),
+                state: ModuleState::Disabled,
             },
             Module {
                 name: "test2".to_string(),
                 path: "/path/to/test2".to_string(),
                 desc: String::new(),
+                state: ModuleState::Disabled,
             },
         ];
 
@@ -71,8 +76,8 @@ mod tests {
         assert!(registry.has_lookup_map());
         if let Some(map) = registry.get_lookup_map() {
             assert_eq!(map.len(), 2);
-            assert_eq!(map.get("test1"), Some(&"/path/to/test1".to_string()));
-            assert_eq!(map.get("test2"), Some(&"/path/to/test2".to_string()));
+            assert_eq!(map.get("test1"), Some(&0));
+            assert_eq!(map.get("test2"), Some(&1));
         }
     }
 
@@ -111,8 +116,8 @@ mod tests {
 { ... }:
 {
   imports = [
-    "/nix/store/abcdef-source/path/to/module1" # test1
-    "/nix/store/ghijkl-source/path/to/module2" # test2
+    "/nix/store/abcdef-source/path/to/module1.nix" # test1
+    "/nix/store/ghijkl-source/path/to/module2.nix" # test2
   ];
 }
 "#;
@@ -142,19 +147,20 @@ mod tests {
 
         // Test with store path but no module comment
         let no_comment = ModuleFile::parse_active_modules(
-            "/nix/store/abcdef-source/path/to/module1\n", // No comment
+            "/nix/store/abcdef-source/path/to/module1.nix\n", // No comment
         );
         assert!(no_comment.is_empty());
 
         // Test with store path but empty comment
         let empty_comment = ModuleFile::parse_active_modules(
-            "/nix/store/abcdef-source/path/to/module1 # \n", // Empty comment
+            "/nix/store/abcdef-source/path/to/module1.nix # \n", // Empty comment
         );
         assert!(empty_comment.is_empty());
 
         // Test with unusual formatting but valid content
-        let unusual_format =
-            ModuleFile::parse_active_modules("   /nix/store/abcdef-source/path   #   test1   \n");
+        let unusual_format = ModuleFile::parse_active_modules(
+            "   /nix/store/abcdef-source/path.nix   #   test1   \n",
+        );
         assert_eq!(unusual_format.len(), 1);
         assert_eq!(unusual_format[0], "test1");
     }
@@ -257,5 +263,34 @@ mod tests {
             .filter(|&name| name == "test3")
             .count();
         assert_eq!(test3_count, 1);
+    }
+
+    // Test module state management
+    #[test]
+    fn test_state_management() {
+        let mut registry = create_test_registry();
+
+        // Test initial state
+        assert_eq!(registry.get_state("test1"), ModuleState::Disabled);
+
+        // Test setting state
+        registry.set_state("test1", ModuleState::Enabled);
+        assert_eq!(registry.get_state("test1"), ModuleState::Enabled);
+
+        registry.set_state("test2", ModuleState::Uncertain);
+        assert_eq!(registry.get_state("test2"), ModuleState::Uncertain);
+
+        // Test confirm states
+        let active_modules = vec!["test1".to_string(), "test3".to_string()];
+        registry.confirm_states(&active_modules);
+
+        // Should set test1 and test3 to Enabled, test2 to Disabled
+        assert_eq!(registry.get_state("test1"), ModuleState::Enabled);
+        assert_eq!(registry.get_state("test2"), ModuleState::Disabled);
+        assert_eq!(registry.get_state("test3"), ModuleState::Enabled);
+
+        // Test mark uncertain
+        registry.mark_uncertain(&["test1".to_string()]);
+        assert_eq!(registry.get_state("test1"), ModuleState::Uncertain);
     }
 }
