@@ -54,7 +54,10 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
 - **`enable`** – Enables the runtime modules system.
 - **`flakeUrl`** - The base flake reference to extend from (should point to your system's configuration flake, using absolute paths with `path:` prefix for local flakes or other prefixes like `github:` for remote sources).
 - **`builtinModules.enable`** - Enables the built-in module library (see section below).
-- **`modules`** - List of modules that can be dynamically enabled/disabled. Each module requires a unique `name` for CLI reference and a `path` pointing to the configuration file you want to dynamically load.
+- **`modules`** - List of modules that can be dynamically enabled/disabled. Each module has the following attributes:
+  - **`name`** - The unique identifier for the module used in CLI commands.
+  - **`path`** - Path to the Nix file containing the module configuration.
+  - **`desc`** - An optional, short description of what the module provides.
 
 ### Example
 
