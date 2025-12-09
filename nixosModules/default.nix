@@ -86,6 +86,17 @@ in
 
     builtinModules.enable = lib.mkEnableOption "Enable built-in module library";
 
+    specialArgs = lib.mkOption {
+      type = lib.types.attrsOf lib.types.anything;
+      default = config._module.args;
+      defaultText = lib.literalExpression "config._module.args";
+      description = ''
+        An attribute set of extra arguments to be passed to the module functions.
+        Defaults to the parent configuration's module arguments, ensuring consistency
+        between validation and runtime.
+      '';
+    };
+
     modules = lib.mkOption {
       type = lib.types.listOf (lib.types.submodule {
         options = {
@@ -116,8 +127,29 @@ in
       moduleManagerRust
     ];
 
-    # Verify that all modules have valid Nix syntax
-    assertions = [{ assertion = lib.all (m: import m.path != null) allModules; }];
+    # Validate runtime modules at build time by evaluating them in a NixOS context
+    assertions = map
+      (m:
+        let
+          eval = lib.evalModules {
+            inherit (cfg) specialArgs;
+            modules = (import (pkgs.path + "/nixos/modules/module-list.nix")) ++ [
+              m.path
+              {
+                nixpkgs.hostPlatform = lib.mkDefault pkgs.system;
+                fileSystems."/" = lib.mkDefault { device = "none"; fsType = "tmpfs"; };
+                boot.loader.grub.enable = lib.mkDefault false;
+                system.stateVersion = lib.mkDefault (config.system.stateVersion or "24.11");
+              }
+            ];
+          };
+        in
+        {
+          assertion = eval.config != null;
+          message = "Runtime module '${m.name}' at ${toString m.path} failed validation";
+        }
+      )
+      allModules;
 
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
