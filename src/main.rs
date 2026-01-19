@@ -5,7 +5,7 @@ mod cli;
 mod module_manager;
 mod system;
 
-use cli::{execute_command, Cli};
+use cli::{Cli, execute_command};
 
 fn main() -> Result<()> {
     // Parse command line arguments

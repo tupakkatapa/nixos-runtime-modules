@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::env;
-use std::process::{exit, Command};
+use std::process::{Command, exit};
 
 // Constants
 const SYSTEM_MODULES_DIR: &str = "/run/runtime-modules";

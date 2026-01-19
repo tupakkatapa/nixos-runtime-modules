@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
@@ -337,7 +338,7 @@ impl ModuleFile {
             for module in modules {
                 // Find path for this module
                 if let Some((_, path)) = module_paths.iter().find(|(name, _)| name == module) {
-                    content.push_str(&format!("    \"{path}\" # {module}\n"));
+                    let _ = writeln!(content, "    \"{path}\" # {module}");
                 }
             }
 

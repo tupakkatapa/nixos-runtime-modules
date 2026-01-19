@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use anyhow::{anyhow, Result};
+    use anyhow::{Result, anyhow};
     use runtime_module::{Module, ModuleFile, ModuleRegistry, ModuleState};
     use std::io::{self, Write};
     use tempfile::NamedTempFile;
