@@ -5,7 +5,7 @@ use std::process::exit;
 
 use crate::module_manager::ModuleManager;
 use crate::system::require_sudo;
-use runtime_module::{ModuleState, ModuleStatus};
+use runtime_modules::{ModuleState, ModuleStatus};
 
 // CLI arguments parsing structure
 #[derive(Parser)]

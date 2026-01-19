@@ -27,6 +27,9 @@ rustPlatform.buildRustPackage rec {
   postInstall = ''
     wrapProgram $out/bin/${pname} \
       --prefix PATH : ${lib.makeBinPath [ nix ]}
+
+    # Deprecated alias for backward compatibility
+    ln -s ${pname} $out/bin/runtime-module
   '';
 
   # Tests require access to a /nix/ and a nix daemon; we run them at pre-commit instead

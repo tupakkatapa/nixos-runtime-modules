@@ -1,6 +1,6 @@
 use crate::system::apply_configuration;
 use anyhow::{Context, Result};
-use runtime_module::{ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
+use runtime_modules::{ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
