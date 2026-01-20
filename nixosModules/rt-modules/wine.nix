@@ -1,11 +1,7 @@
-# Windows compatibility with gaming tools for Wayland
+# Wine Windows compatibility layer
 { pkgs, ... }: {
   environment.systemPackages = with pkgs; [
-    bottles
-    lutris
     wineWowPackages.waylandFull
     winetricks
   ];
 }
-
-

@@ -1,4 +1,4 @@
-# Steam with GameMode + Discord
+# Steam with GameMode performance optimization
 { pkgs, ... }: {
   programs.steam = {
     enable = true;
@@ -22,9 +22,4 @@
       };
     };
   };
-
-  environment.systemPackages = with pkgs; [
-    discord
-    heroic
-  ];
 }
