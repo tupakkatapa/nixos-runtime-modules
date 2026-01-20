@@ -56,7 +56,7 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
 - **`builtinModules.enable`** - Enables the built-in module library (see section below).
 - **`modules`** - List of modules that can be dynamically enabled/disabled. Each module has the following attributes:
   - **`name`** - The unique identifier for the module used in CLI commands.
-  - **`path`** - Path to the Nix file containing the module configuration.
+  - **`imports`** - List of module imports (paths or parameterized imports).
   - **`desc`** - An optional, short description of what the module provides.
 
 ### Example
@@ -70,11 +70,14 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
     modules = [
       {
         name = "gaming";
-        path = ./gaming.nix;
+        imports = [ ./gaming.nix ];
       }
       {
         name = "virtualization";
-        path = ./virtualization.nix;
+        imports = [
+          ./podman.nix
+          ./libvirt.nix
+        ];
       }
     ];
   };
@@ -83,15 +86,15 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
 
 ### Built-in Modules
 
-The system includes a set of predefined, upstream modules that can be made available by enabling the `builtinModules.enable` option. Once enabled, you can manage these modules using the same `runtime-module` commands with their `rt.` prefix. Available upstream modules can be found in [rt-modules directory](./nixosModules/rt-modules).
+The system includes a set of predefined, upstream modules that can be made available by enabling the `builtinModules.enable` option. Once enabled, you can manage these modules using the same `runtime-modules` commands with their `rt.` prefix. Available upstream modules can be found in [rt-modules directory](./nixosModules/rt-modules).
 
 ## Usage
 
-The `runtime-module` command is available after enabling the module:
+The `runtime-modules` command is available after enabling the module:
 
 ```bash
-$ runtime-module --help
-Usage: runtime-module [OPTIONS] <COMMAND>
+$ runtime-modules --help
+Usage: runtime-modules [OPTIONS] <COMMAND>
 
 Commands:
   enable   Build and enable one or more modules
@@ -112,11 +115,11 @@ Options:
 
 ```bash
 # Check all available modules and their status
-runtime-module list
+runtime-modules list
 
 # Enable one or more modules
-sudo runtime-module enable gaming virtualization
+sudo runtime-modules enable gaming virtualization
 
 # Disable a module
-sudo runtime-module disable gaming
+sudo runtime-modules disable gaming
 ```
