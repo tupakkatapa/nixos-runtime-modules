@@ -31,15 +31,26 @@ let
       map
         (file: {
           name = "rt." + (lib.removeSuffix ".nix" file);
-          path = libDir + "/${file}";
+          imports = [ (libDir + "/${file}") ];
           desc = getDescription file;
         })
         nixFiles
     else
       [ ];
 
-  # All modules = user modules + upstream modules
-  allModules = cfg.modules ++ rtModules;
+  # Normalize module: append deprecated 'path' to 'imports'
+  normalizeModule = module:
+    if module.path != null then
+      module // { imports = module.imports ++ [ module.path ]; }
+    else
+      module;
+
+  # All modules = user modules (normalized) + upstream modules
+  allModules = (map normalizeModule cfg.modules) ++ rtModules;
+
+  # Check for deprecated 'path' attribute
+  modulesWithPath = builtins.filter (m: m.path != null) cfg.modules;
+  hasDeprecatedPath = modulesWithPath != [ ];
 
   # Minimal NixOS config for module validation
   minimalValidationConfig = {
@@ -56,7 +67,7 @@ let
       eval = import (pkgs.path + "/nixos/lib/eval-config.nix") {
         inherit (pkgs.stdenv.hostPlatform) system;
         specialArgs = inheritedSpecialArgs;
-        modules = [ module.path minimalValidationConfig ];
+        modules = module.imports ++ [ minimalValidationConfig ];
       };
     in
     # Force evaluation by accessing the derivation path
@@ -66,7 +77,7 @@ let
   modulesJson = builtins.toJSON {
     modules = map
       (module: {
-        inherit (module) name path desc;
+        inherit (module) name desc;
         state = "Disabled";
       })
       allModules;
@@ -122,9 +133,16 @@ in
             description = "Name of the module";
           };
 
+          imports = lib.mkOption {
+            type = lib.types.listOf lib.types.unspecified;
+            default = [ ];
+            description = "List of module imports";
+          };
+
           path = lib.mkOption {
-            type = lib.types.path;
-            description = "Path to the Nix file containing the module configuration";
+            type = lib.types.nullOr lib.types.path;
+            default = null;
+            description = "Deprecated: use 'imports' instead";
           };
 
           desc = lib.mkOption {
@@ -145,10 +163,26 @@ in
     ];
 
     # Validate all modules
-    assertions = [{
-      assertion = lib.all validateModule allModules;
-      message = "";
-    }];
+    assertions = [
+      {
+        assertion = !hasDeprecatedPath;
+        message = ''
+          services.runtimeModules: 'path' option has been replaced by 'imports'.
+          Affected modules: ${lib.concatMapStringsSep ", " (m: m.name) modulesWithPath}
+
+          Migration: change 'path = ./file.nix;' to 'imports = [ ./file.nix ];'
+
+          Example:
+            { name = "foo"; path = ./foo.nix; }
+          becomes:
+            { name = "foo"; imports = [ ./foo.nix ]; }
+        '';
+      }
+      {
+        assertion = lib.all validateModule allModules;
+        message = "";
+      }
+    ];
 
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
