@@ -4,7 +4,7 @@ use runtime_modules::{ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
-const MODULES_FILE: &str = "/run/runtime-modules/runtime-modules.nix";
+const STATE_FILE: &str = "/run/runtime-modules/state.json";
 
 // ModuleManager handles the business logic
 pub struct ModuleManager {
@@ -18,7 +18,7 @@ impl ModuleManager {
         let registry =
             ModuleRegistry::from_file(MODULES_JSON).context("failed to load module registry")?;
         let module_file =
-            ModuleFile::from_file(MODULES_FILE).context("failed to load module file")?;
+            ModuleFile::from_file(STATE_FILE).context("failed to load module file")?;
 
         // Update the registry states based on active modules
         let mut manager = Self {
@@ -112,11 +112,11 @@ impl ModuleManager {
 
     // Apply changes and persist state
     fn apply_changes(&mut self, _force: bool, action_msg: &str) -> Result<()> {
-        // Save the module file
+        // Save the state file
         self.module_file
-            .save(MODULES_FILE, &self.registry)
-            .with_context(|| format!("failed to save module file after {action_msg}"))?;
-        println!("generated modules file at '{MODULES_FILE}'");
+            .save(STATE_FILE)
+            .with_context(|| format!("failed to save state file after {action_msg}"))?;
+        println!("saved state to '{STATE_FILE}'");
 
         // Apply configuration
         match apply_configuration() {

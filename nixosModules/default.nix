@@ -6,7 +6,7 @@
 let
   cfg = config.services.runtimeModules;
   dataDir = "/run/runtime-modules";
-  modulesNix = "${dataDir}/runtime-modules.nix";
+  stateJson = "${dataDir}/state.json";
 
   # Extract custom specialArgs by filtering out standard NixOS module args
   standardArgs = [ "config" "lib" "pkgs" "options" "modulesPath" ];
@@ -88,7 +88,7 @@ let
     inherit (pkgs) rustPlatform nix;
   };
 
-  # Create a static flake file that imports a dynamically generated modules file
+  # Create a static flake file that dynamically resolves enabled modules
   staticFlakeFile = pkgs.writeTextFile {
     name = "runtime-modules-flake";
     destination = "/flake.nix";
@@ -100,16 +100,29 @@ let
         inputs.base.url = "${cfg.flakeUrl}";
         inputs.nixpkgs.follows = "base/nixpkgs";
 
-        outputs = { self, nixpkgs, base }: {
-          nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
-            modules = [
-              # Import the dynamically generated modules file
-              ${modulesNix}
-              # Add a marker file to detect systems built using runtime-modules
-              { environment.etc."runtime-modules-enabled".text = "true"; }
-            ];
+        outputs = { self, nixpkgs, base }:
+          let
+            # Read enabled modules from state file
+            stateFile = ${dataDir}/state.json;
+            state = builtins.fromJSON (builtins.readFile stateFile);
+            enabledNames = state.enabled or [];
+
+            # Get all module definitions from base config
+            baseConfig = base.nixosConfigurations.${config.networking.hostName}.config;
+            allModules = baseConfig.services.runtimeModules._allModules;
+
+            # Filter to only enabled modules and collect their imports
+            enabledModules = builtins.filter (m: builtins.elem m.name enabledNames) allModules;
+            enabledImports = builtins.concatMap (m: m.imports) enabledModules;
+          in
+          {
+            nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
+              modules = enabledImports ++ [
+                # Add a marker file to detect systems built using runtime-modules
+                { environment.etc."runtime-modules-enabled".text = "true"; }
+              ];
+            };
           };
-        };
       }
     '';
   };
@@ -155,9 +168,18 @@ in
       default = [ ];
       description = "Runtime modules definition";
     };
+
+    _allModules = lib.mkOption {
+      type = lib.types.listOf lib.types.unspecified;
+      internal = true;
+      readOnly = true;
+      description = "All modules including builtins";
+    };
   };
 
   config = lib.mkIf cfg.enable {
+    services.runtimeModules._allModules = allModules;
+
     environment.systemPackages = [
       moduleManagerRust
     ];
@@ -195,13 +217,13 @@ in
 
       # Write the modules.json file
       echo '${modulesJson}' > ${dataDir}/modules.json
-      chmod 755 ${dataDir}/modules.json
+      chmod 644 ${dataDir}/modules.json
 
       # Auto-reset state if not running on a runtime-modules system
       if [ ! -f "/etc/runtime-modules-enabled" ]; then
-        if [ -f "${modulesNix}" ]; then
+        if [ -f "${stateJson}" ]; then
           echo "[runtime-modules] standard system detected, cleaning runtime state..."
-          rm ${modulesNix}
+          rm ${stateJson}
         fi
       fi
     '';

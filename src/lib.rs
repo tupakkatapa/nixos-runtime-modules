@@ -1,7 +1,6 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
 use std::fs;
 use std::path::Path;
 
@@ -25,6 +24,7 @@ pub struct ModuleRegistry {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Module {
     pub name: String,
+    #[serde(default)]
     pub path: String,
     #[serde(default)]
     pub desc: String,
@@ -35,6 +35,7 @@ pub struct Module {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ModuleStatus {
     pub name: String,
+    #[serde(default)]
     pub path: String,
     pub state: ModuleState,
     #[serde(default)]
@@ -104,24 +105,6 @@ impl ModuleRegistry {
             map.insert(module.name.clone(), index);
         }
         self.module_map = Some(map);
-    }
-
-    // Get module path efficiently using HashMap
-    #[must_use]
-    pub fn get_module_path(&self, module_name: &str) -> Option<String> {
-        if let Some(map) = &self.module_map {
-            if let Some(index) = map.get(module_name) {
-                return Some(self.modules[*index].path.clone());
-            }
-        } else {
-            // Fallback to linear search if map not initialized
-            for module in &self.modules {
-                if module.name == module_name {
-                    return Some(module.path.clone());
-                }
-            }
-        }
-        None
     }
 
     // Get module state by name
@@ -210,37 +193,42 @@ impl ModuleRegistry {
     }
 }
 
-// ModuleFile manages parsing and generating the modules file
+// State file format for enabled modules
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct StateFile {
+    #[serde(default)]
+    pub enabled: Vec<String>,
+}
+
+// ModuleFile manages the state of enabled modules
 pub struct ModuleFile {
     pub active_modules: Vec<String>,
-    content: Option<String>,
 }
 
 impl ModuleFile {
-    /// Create a new `ModuleFile` by reading from path
+    /// Create a new `ModuleFile` by reading from JSON state file
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be read.
+    /// Returns an error if the file cannot be read or parsed.
     pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path_ref = path.as_ref();
 
         if !path_ref.exists() {
             return Ok(Self {
                 active_modules: Vec::new(),
-                content: None,
             });
         }
 
         let path_str = path_ref.to_string_lossy();
         let content = fs::read_to_string(path_ref)
-            .with_context(|| format!("failed to read module file from {path_str}"))?;
+            .with_context(|| format!("failed to read state file from {path_str}"))?;
 
-        let active_modules = Self::parse_active_modules(&content);
+        let state: StateFile = serde_json::from_str(&content)
+            .with_context(|| format!("failed to parse JSON from {path_str}"))?;
 
         Ok(Self {
-            active_modules,
-            content: Some(content),
+            active_modules: state.enabled,
         })
     }
 
@@ -249,31 +237,15 @@ impl ModuleFile {
     pub fn empty() -> Self {
         Self {
             active_modules: Vec::new(),
-            content: None,
         }
     }
 
-    // Parse module names from file content (made public for testing)
+    // Parse module names from JSON content
     #[must_use]
     pub fn parse_active_modules(content: &str) -> Vec<String> {
-        let mut active_modules = Vec::new();
-
-        // Extract module names from nix store path lines
-        for line in content.lines() {
-            let line = line.trim();
-            if line.contains("/nix/store/") && line.contains(".nix") {
-                if let Some(comment_pos) = line.find('#') {
-                    let comment_part = &line[comment_pos + 1..];
-                    let module_name = comment_part.trim();
-
-                    if !module_name.is_empty() {
-                        active_modules.push(module_name.to_string());
-                    }
-                }
-            }
-        }
-
-        active_modules
+        serde_json::from_str::<StateFile>(content)
+            .map(|s| s.enabled)
+            .unwrap_or_default()
     }
 
     // Check if a module is enabled
@@ -307,61 +279,27 @@ impl ModuleFile {
         original_len != self.active_modules.len()
     }
 
-    // Generate file content with the current active modules
+    // Generate JSON content with enabled modules
     #[must_use]
-    pub fn generate_content(&self, registry: &ModuleRegistry) -> String {
-        let module_paths: Vec<(String, String)> = self
-            .active_modules
-            .iter()
-            .filter_map(|module| {
-                registry
-                    .get_module_path(module)
-                    .map(|path| (module.clone(), path))
-            })
-            .collect();
-
-        Self::generate_file_content(&self.active_modules, &module_paths)
+    pub fn generate_content(&self) -> String {
+        let state = StateFile {
+            enabled: self.active_modules.clone(),
+        };
+        serde_json::to_string_pretty(&state).unwrap_or_else(|_| r#"{"enabled":[]}"#.to_string())
     }
 
-    // Static method to generate file content
-    fn generate_file_content(modules: &[String], module_paths: &[(String, String)]) -> String {
-        let mut content = String::from("# This file is generated by runtime-module script\n");
-        content.push_str("{ ... }:\n");
-        content.push_str("{\n");
-
-        if modules.is_empty() {
-            content.push_str("  # No active modules\n");
-        } else {
-            content.push_str("  imports = [\n");
-
-            // Add each module path
-            for module in modules {
-                // Find path for this module
-                if let Some((_, path)) = module_paths.iter().find(|(name, _)| name == module) {
-                    let _ = writeln!(content, "    \"{path}\" # {module}");
-                }
-            }
-
-            content.push_str("  ];\n");
-        }
-
-        content.push_str("}\n");
-
-        content
-    }
-
-    /// Save the module file
+    /// Save the state file as JSON
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be written or permissions cannot be set.
-    pub fn save<P: AsRef<Path>>(&self, path: P, registry: &ModuleRegistry) -> Result<()> {
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path_ref = path.as_ref();
         let path_str = path_ref.to_string_lossy();
 
-        let content = self.generate_content(registry);
+        let content = self.generate_content();
         fs::write(path_ref, &content)
-            .with_context(|| format!("failed to write module file to {path_str}"))?;
+            .with_context(|| format!("failed to write state file to {path_str}"))?;
 
         // Fix permissions - set to 644 (rw-r--r--)
         #[cfg(unix)]
@@ -376,11 +314,5 @@ impl ModuleFile {
         }
 
         Ok(())
-    }
-
-    // Access content (for silencing 'never read' warning)
-    #[must_use]
-    pub fn get_content(&self) -> Option<&String> {
-        self.content.as_ref()
     }
 }
