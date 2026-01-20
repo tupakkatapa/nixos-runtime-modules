@@ -1,9 +1,16 @@
 # nixosModules/runtime-modules.nix
-{ config, lib, pkgs, ... }:
+#
+# Note: options and modulesPath are listed in args to ensure they're filtered
+# out when extracting custom specialArgs for module validation.
+{ config, lib, pkgs, ... }@args:
 let
   cfg = config.services.runtimeModules;
   dataDir = "/run/runtime-modules";
   modulesNix = "${dataDir}/runtime-modules.nix";
+
+  # Extract custom specialArgs by filtering out standard NixOS module args
+  standardArgs = [ "config" "lib" "pkgs" "options" "modulesPath" ];
+  inheritedSpecialArgs = lib.filterAttrs (n: _: !(builtins.elem n standardArgs)) args;
 
   # Upstream modules
   libDir = ./rt-modules;
@@ -33,6 +40,27 @@ let
 
   # All modules = user modules + upstream modules
   allModules = cfg.modules ++ rtModules;
+
+  # Minimal NixOS config for module validation
+  minimalValidationConfig = {
+    boot.loader.grub.enable = false;
+    fileSystems."/" = { device = "/dev/null"; fsType = "ext4"; };
+    system.stateVersion = config.system.stateVersion;
+    nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system;
+    nixpkgs.config.allowUnfree = true;
+  };
+
+  # Evaluate each module in a minimal NixOS context
+  validateModule = module:
+    let
+      eval = import (pkgs.path + "/nixos/lib/eval-config.nix") {
+        inherit (pkgs.stdenv.hostPlatform) system;
+        specialArgs = inheritedSpecialArgs;
+        modules = [ module.path minimalValidationConfig ];
+      };
+    in
+    # Force evaluation by accessing the derivation path
+    builtins.seq eval.config.system.build.toplevel.drvPath true;
 
   # Generate the modules.json content
   modulesJson = builtins.toJSON {
@@ -116,8 +144,11 @@ in
       moduleManagerRust
     ];
 
-    # Verify that all modules have valid Nix syntax
-    assertions = [{ assertion = lib.all (m: import m.path != null) allModules; }];
+    # Validate all modules
+    assertions = [{
+      assertion = lib.all validateModule allModules;
+      message = "";
+    }];
 
     # Ensure the directory exists during activation
     system.activationScripts.runtimeModulesSetup = lib.stringAfter [ "etc" "users" "groups" ] ''
