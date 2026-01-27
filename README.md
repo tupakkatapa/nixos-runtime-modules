@@ -58,6 +58,7 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
   - **`name`** - The unique identifier for the module used in CLI commands.
   - **`imports`** - List of module imports (paths or parameterized imports).
   - **`desc`** - An optional, short description of what the module provides.
+  - **`skipValidation`** - Skip validation during flake check (default: `false`).
 
 ### Example
 
