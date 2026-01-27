@@ -52,6 +52,9 @@ let
   modulesWithPath = builtins.filter (m: m.path != null) cfg.modules;
   hasDeprecatedPath = modulesWithPath != [ ];
 
+  # Modules to validate
+  modulesToValidate = builtins.filter (m: !(m.skipValidation or false)) allModules;
+
   # Minimal NixOS config for module validation
   minimalValidationConfig = {
     boot.loader.grub.enable = false;
@@ -163,6 +166,12 @@ in
             default = "";
             description = "Description of what the module provides";
           };
+
+          skipValidation = lib.mkOption {
+            type = lib.types.bool;
+            default = false;
+            description = "Skip validation for this module during nix flake check";
+          };
         };
       });
       default = [ ];
@@ -201,7 +210,7 @@ in
         '';
       }
       {
-        assertion = lib.all validateModule allModules;
+        assertion = lib.all validateModule modulesToValidate;
         message = "";
       }
     ];
