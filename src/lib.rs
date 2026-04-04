@@ -22,6 +22,7 @@ pub struct ModuleRegistry {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct Module {
     pub name: String,
     #[serde(default)]
@@ -29,10 +30,15 @@ pub struct Module {
     #[serde(default)]
     pub desc: String,
     #[serde(default)]
+    pub post_enable: Option<String>,
+    #[serde(default)]
+    pub post_disable: Option<String>,
+    #[serde(default)]
     pub state: ModuleState,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ModuleStatus {
     pub name: String,
     #[serde(default)]
@@ -40,6 +46,10 @@ pub struct ModuleStatus {
     pub state: ModuleState,
     #[serde(default)]
     pub desc: String,
+    #[serde(default)]
+    pub post_enable: Option<String>,
+    #[serde(default)]
+    pub post_disable: Option<String>,
 }
 
 impl ModuleRegistry {

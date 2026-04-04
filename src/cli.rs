@@ -4,7 +4,7 @@ use serde::Serialize;
 use std::process::exit;
 
 use crate::module_manager::ModuleManager;
-use crate::system::require_sudo;
+use crate::system::{SudoResult, require_sudo};
 use runtime_modules::{ModuleState, ModuleStatus};
 
 // CLI arguments parsing structure
@@ -32,13 +32,13 @@ struct CategorizedModules {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Build and enable one or more modules
+    /// Enable one or more modules
     Enable {
         /// Module names to enable
         #[arg(required = true)]
         modules: Vec<String>,
     },
-    /// Disable one or more specific modules
+    /// Disable one or more modules
     Disable {
         /// Module names to disable
         #[arg(required = true)]
@@ -62,28 +62,58 @@ pub enum Commands {
 pub fn execute_command(cli: &Cli) -> Result<()> {
     match &cli.command {
         Commands::List => cmd_list(cli.json),
-        Commands::Reset => {
-            require_sudo("reset", &[], cli.force)?;
-            cmd_reset(cli.force)
-        }
+        Commands::Reset => match require_sudo("reset", &[], cli.force)? {
+            SudoResult::AlreadyRoot => cmd_reset(cli.force),
+            SudoResult::Elevated { success } => {
+                if !success {
+                    exit(1);
+                }
+                Ok(())
+            }
+        },
         Commands::Enable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("enable", modules, cli.force)?;
-            cmd_enable(modules, cli.force)
+            match require_sudo("enable", modules, cli.force)? {
+                SudoResult::AlreadyRoot => {
+                    cmd_enable(modules, cli.force)?;
+                    run_hooks(modules, |s| s.post_enable.as_deref())
+                }
+                SudoResult::Elevated { success } => {
+                    if !success {
+                        exit(1);
+                    }
+                    run_hooks(modules, |s| s.post_enable.as_deref())
+                }
+            }
         }
         Commands::Disable { modules } => {
             cmd_verify_modules(modules)?;
-            require_sudo("disable", modules, cli.force)?;
-            cmd_disable(modules, cli.force)
+            match require_sudo("disable", modules, cli.force)? {
+                SudoResult::AlreadyRoot => {
+                    cmd_disable(modules, cli.force)?;
+                    run_hooks(modules, |s| s.post_disable.as_deref())
+                }
+                SudoResult::Elevated { success } => {
+                    if !success {
+                        exit(1);
+                    }
+                    run_hooks(modules, |s| s.post_disable.as_deref())
+                }
+            }
         }
         Commands::Status { modules } => {
             cmd_verify_modules(modules)?;
             cmd_status(modules, cli.json)
         }
-        Commands::Rebuild => {
-            require_sudo("rebuild", &[], cli.force)?;
-            cmd_rebuild(cli.force)
-        }
+        Commands::Rebuild => match require_sudo("rebuild", &[], cli.force)? {
+            SudoResult::AlreadyRoot => cmd_rebuild(cli.force),
+            SudoResult::Elevated { success } => {
+                if !success {
+                    exit(1);
+                }
+                Ok(())
+            }
+        },
     }
 }
 
@@ -237,4 +267,58 @@ fn cmd_rebuild(force: bool) -> Result<()> {
     let mut manager =
         ModuleManager::new().context("failed to initialize module manager for rebuild")?;
     manager.rebuild(force).context("failed to rebuild system")
+}
+
+fn run_hooks(modules: &[String], get_hook: impl Fn(&ModuleStatus) -> Option<&str>) -> Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+
+    let manager =
+        ModuleManager::new().context("failed to initialize module manager for hook execution")?;
+
+    let statuses = manager.get_status(modules);
+
+    // Determine if we need to drop privileges (root via interactive sudo)
+    let is_root = unsafe { libc::geteuid() } == 0;
+    let sudo_ctx = if is_root {
+        std::env::var("SUDO_USER")
+            .ok()
+            .zip(std::env::var("SUDO_UID").ok())
+    } else {
+        None
+    };
+
+    for status in &statuses {
+        let Some(hook) = get_hook(status) else {
+            continue;
+        };
+
+        println!("executing '{hook}'");
+
+        let result = match &sudo_ctx {
+            Some((user, uid)) => {
+                let cmd = format!("export XDG_RUNTIME_DIR=/run/user/{uid}; {hook}");
+                Command::new("runuser")
+                    .args(["-u", user.as_str(), "--", "sh", "-c", cmd.as_str()])
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .process_group(0)
+                    .spawn()
+            }
+            None => Command::new("sh")
+                .args(["-c", hook])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .process_group(0)
+                .spawn(),
+        };
+
+        if let Err(e) = result {
+            eprintln!("warning: failed to launch '{hook}': {e}");
+        }
+    }
+
+    Ok(())
 }

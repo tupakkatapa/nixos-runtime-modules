@@ -1,12 +1,18 @@
 use anyhow::{Context, Result, anyhow};
 use std::env;
-use std::process::{Command, exit};
+use std::process::Command;
 
 // Constants
 const SYSTEM_MODULES_DIR: &str = "/run/runtime-modules";
 
+// Result of sudo elevation
+pub enum SudoResult {
+    AlreadyRoot,
+    Elevated { success: bool },
+}
+
 // Ensure we have sudo access when needed
-pub fn require_sudo(action: &str, args: &[String], force: bool) -> Result<()> {
+pub fn require_sudo(action: &str, args: &[String], force: bool) -> Result<SudoResult> {
     if unsafe { libc::geteuid() } != 0 {
         println!("info: elevated privileges are required for this action");
 
@@ -30,10 +36,12 @@ pub fn require_sudo(action: &str, args: &[String], force: bool) -> Result<()> {
             .status()
             .context("failed to execute sudo command")?;
 
-        exit(status.code().unwrap_or(1));
+        return Ok(SudoResult::Elevated {
+            success: status.success(),
+        });
     }
 
-    Ok(())
+    Ok(SudoResult::AlreadyRoot)
 }
 
 // Apply the current configuration

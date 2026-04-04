@@ -58,6 +58,8 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
   - **`name`** - The unique identifier for the module used in CLI commands.
   - **`imports`** - List of module imports (paths or parameterized imports).
   - **`desc`** - An optional, short description of what the module provides.
+  - **`postEnable`** - Command to run after enabling the module (default: `null`).
+  - **`postDisable`** - Command to run after disabling the module (default: `null`).
   - **`skipValidation`** - Skip validation during flake check (default: `false`).
 
 ### Example
@@ -72,6 +74,8 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
       {
         name = "gaming";
         imports = [ ./gaming.nix ];
+        postEnable = "steam";
+        postDisable = "pkill -f steam";
       }
       {
         name = "virtualization";
@@ -98,8 +102,8 @@ $ runtime-modules --help
 Usage: runtime-modules [OPTIONS] <COMMAND>
 
 Commands:
-  enable   Build and enable one or more modules
-  disable  Disable one or more specific modules
+  enable   Enable one or more modules
+  disable  Disable one or more modules
   reset    Disable all modules (revert to base system)
   status   Show module status (enabled/disabled)
   list     List all available modules

@@ -1,5 +1,6 @@
 .direnv
 .pre-commit-config.yaml
+CLAUDE.md
 result
 
 debug/

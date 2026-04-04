@@ -11,7 +11,7 @@ fn main() -> Result<()> {
     // Check for deprecated invocation name
     if let Some(name) = std::env::args().next() {
         if name.ends_with("runtime-module") {
-            eprintln!("Warning: 'runtime-module' is deprecated, use 'runtime-modules' instead");
+            eprintln!("warning: 'runtime-module' is deprecated, use 'runtime-modules' instead");
         }
     }
 

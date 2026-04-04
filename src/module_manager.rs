@@ -77,6 +77,8 @@ impl ModuleManager {
                         path: registry_module.path.clone(),
                         state,
                         desc: registry_module.desc.clone(),
+                        post_enable: registry_module.post_enable.clone(),
+                        post_disable: registry_module.post_disable.clone(),
                     }
                 } else {
                     // Fallback if module not found
@@ -85,6 +87,8 @@ impl ModuleManager {
                         path: String::new(),
                         state,
                         desc: String::new(),
+                        post_enable: None,
+                        post_disable: None,
                     }
                 }
             })
@@ -105,6 +109,8 @@ impl ModuleManager {
                     path: module.path.clone(),
                     state,
                     desc: module.desc.clone(),
+                    post_enable: module.post_enable.clone(),
+                    post_disable: module.post_disable.clone(),
                 }
             })
             .collect()
@@ -153,10 +159,10 @@ impl ModuleManager {
 
             match current_state {
                 ModuleState::Enabled => {
-                    println!("module {module} is already enabled");
+                    println!("'{module}' module is already enabled");
                 }
                 ModuleState::Uncertain => {
-                    println!("warning: module {module} is in an uncertain state");
+                    println!("warning: '{module}' module is in an uncertain state");
                     changes = true;
                 }
                 ModuleState::Disabled => {
@@ -190,16 +196,16 @@ impl ModuleManager {
 
             match current_state {
                 ModuleState::Enabled => {
-                    println!("disabling module {module}...");
+                    println!("disabling '{module}' module...");
                     self.registry.set_state(module, ModuleState::Uncertain);
                     changes = true;
                 }
                 ModuleState::Uncertain => {
-                    println!("warning: module {module} is in an uncertain state");
+                    println!("warning: '{module}' module is in an uncertain state");
                     changes = true;
                 }
                 ModuleState::Disabled => {
-                    println!("module {module} is already disabled");
+                    println!("'{module}' module is already disabled");
                 }
             }
         }

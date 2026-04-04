@@ -27,6 +27,7 @@ let
             firstLine = lib.head (lib.splitString "\n" content);
           in
           lib.strings.trim (lib.removePrefix "#" firstLine);
+
       in
       map
         (file: {
@@ -81,6 +82,8 @@ let
     modules = map
       (module: {
         inherit (module) name desc;
+        postEnable = module.postEnable or "";
+        postDisable = module.postDisable or "";
         state = "Disabled";
       })
       allModules;
@@ -165,6 +168,18 @@ in
             type = lib.types.str;
             default = "";
             description = "Description of what the module provides";
+          };
+
+          postEnable = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Command to run after enabling the module";
+          };
+
+          postDisable = lib.mkOption {
+            type = lib.types.nullOr lib.types.str;
+            default = null;
+            description = "Command to run after disabling the module";
           };
 
           skipValidation = lib.mkOption {
