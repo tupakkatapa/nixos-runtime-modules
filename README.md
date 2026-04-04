@@ -58,8 +58,8 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
   - **`name`** - The unique identifier for the module used in CLI commands.
   - **`imports`** - List of module imports (paths or parameterized imports).
   - **`desc`** - An optional, short description of what the module provides.
-  - **`postEnable`** - Command to run after enabling the module (default: `null`).
-  - **`postDisable`** - Command to run after disabling the module (default: `null`).
+  - **`postEnable`** - Command to run after enabling the module.
+  - **`postDisable`** - Command to run after disabling the module.
   - **`skipValidation`** - Skip validation during flake check (default: `false`).
 
 ### Example
@@ -75,7 +75,6 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
         name = "gaming";
         imports = [ ./gaming.nix ];
         postEnable = "steam";
-        postDisable = "pkill -f steam";
       }
       {
         name = "virtualization";
