@@ -44,9 +44,9 @@ pub enum Commands {
         #[arg(required = true)]
         modules: Vec<String>,
     },
-    /// Disable all modules (revert to base system)
+    /// Disable all modules
     Reset,
-    /// Show module status (enabled/disabled)
+    /// Show module status
     Status {
         /// Module names to check status
         #[arg(required = true)]
