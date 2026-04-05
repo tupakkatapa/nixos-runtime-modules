@@ -2,7 +2,6 @@
 { pkgs, ... }: {
   environment.systemPackages = with pkgs; [
     kdePackages.kdenlive
-    video-trimmer
     ffmpeg
     frei0r
   ];

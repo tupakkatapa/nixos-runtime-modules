@@ -1,7 +1,7 @@
-# Wine Windows compatibility layer
+# Wine for X11
 { pkgs, ... }: {
   environment.systemPackages = with pkgs; [
-    wineWowPackages.waylandFull
+    wineWowPackages.full
     winetricks
   ];
 }
