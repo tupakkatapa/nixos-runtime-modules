@@ -62,7 +62,8 @@ let
     fileSystems."/" = { device = "/dev/null"; fsType = "ext4"; };
     system.stateVersion = config.system.stateVersion;
     nixpkgs.hostPlatform = pkgs.stdenv.hostPlatform.system;
-    nixpkgs.config.allowUnfree = true;
+    nixpkgs.overlays = config.nixpkgs.overlays;
+    nixpkgs.config = config.nixpkgs.config;
   };
 
   # Evaluate each module in a minimal NixOS context
