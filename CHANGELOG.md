@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Bumped nixpkgs to `nixos-26.05`
+- `rt.wine-wl` and `rt.wine-x11` now use `wineWow64Packages` (`wineWowPackages` deprecated upstream)
+
 ### Fixed
 - Module validation now inherits host overlays and nixpkgs config, fixing missing overlay packages during `nix flake check`
 
