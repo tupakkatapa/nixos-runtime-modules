@@ -1,5 +1,14 @@
 # Steam with GameMode performance optimization
-{ pkgs, ... }: {
+{ pkgs, lib, ... }: {
+  # https://github.com/nixos/nixpkgs/issues/523200
+  security.wrappers.bwrap = lib.mkForce {
+    source = "${pkgs.bubblewrap}/bin/bwrap";
+    owner = "root";
+    group = "root";
+    setuid = false;
+    setgid = false;
+  };
+
   programs.steam = {
     enable = true;
     gamescopeSession = {
