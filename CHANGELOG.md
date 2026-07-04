@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Module validation now inherits host overlays and nixpkgs config, fixing missing overlay packages during `nix flake check`
+- `rt.steam` bubblewrap regression ([nixpkgs#523200](https://github.com/nixos/nixpkgs/issues/523200))
+- Skip empty `postEnable`/`postDisable` hooks (no more `executing ''`)
 
 ## [0.2.1] - 2026-04-05
 
