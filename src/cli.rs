@@ -289,7 +289,7 @@ fn run_hooks(modules: &[String], get_hook: impl Fn(&ModuleStatus) -> Option<&str
     };
 
     for status in &statuses {
-        let Some(hook) = get_hook(status) else {
+        let Some(hook) = get_hook(status).filter(|h| !h.is_empty()) else {
             continue;
         };
 
