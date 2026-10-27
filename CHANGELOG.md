@@ -14,6 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Interrupted rebuilds no longer leave modules reported as enabled
 - Rebuilds that fail after activation no longer leave applied modules uncertain
+- Concurrent runs no longer race; operations wait for each other
+- `state.json` is written atomically
+- Module descriptions containing `'` no longer break activation
 
 ## [0.3.0] - 2026-10-27
 

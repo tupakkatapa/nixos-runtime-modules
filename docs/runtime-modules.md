@@ -86,6 +86,8 @@ Commands that modify system state require root privileges. The CLI will automati
 - `list`: Lists all modules grouped into user and upstream sections. State markers: `[✓]` enabled, `[ ]` disabled, `[?]` uncertain.
 - `rebuild`: Rebuilds with currently enabled modules without changing state. Use to recover from a failed rebuild.
 
+Commands that change the system run one at a time; a second one waits for the first to finish.
+
 ### Options
 
 - `--json`, `-j`: JSON output. `list` groups into `user_modules` and `upstream_modules` arrays; `status` returns module status objects.

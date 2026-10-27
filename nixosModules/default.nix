@@ -78,8 +78,7 @@ let
     # Force evaluation by accessing the derivation path
     builtins.seq eval.config.system.build.toplevel.drvPath true;
 
-  # Generate the modules.json content
-  modulesJson = builtins.toJSON {
+  modulesJson = pkgs.writeText "modules.json" (builtins.toJSON {
     modules = map
       (module: {
         inherit (module) name desc;
@@ -87,7 +86,7 @@ let
         postDisable = module.postDisable or "";
       })
       allModules;
-  };
+  });
 
   # Build the Rust program
   moduleManagerRust = pkgs.callPackage ../package.nix {
@@ -240,8 +239,8 @@ in
       cp -f ${staticFlakeFile}/flake.nix ${dataDir}/flake.nix
       chmod 644 ${dataDir}/flake.nix
 
-      # Write the modules.json file
-      echo '${modulesJson}' > ${dataDir}/modules.json
+      # Copy the module registry
+      cp -f ${modulesJson} ${dataDir}/modules.json
       chmod 644 ${dataDir}/modules.json
 
       # Auto-reset state if not running on a runtime-modules system

@@ -1,7 +1,10 @@
 #[cfg(test)]
 mod tests {
     use anyhow::{Result, anyhow};
-    use runtime_modules::{Module, ModuleFile, ModuleRegistry, ModuleState, in_sync, read_applied};
+    use runtime_modules::{
+        Module, ModuleFile, ModuleRegistry, ModuleState, OperationLock, in_sync, read_applied,
+        write_atomic,
+    };
     use std::io::{self, Write};
     use tempfile::NamedTempFile;
 
@@ -366,5 +369,38 @@ mod tests {
         assert!(in_sync(&[], Some(&[])));
         assert!(!in_sync(&a, Some(&b[..1])));
         assert!(!in_sync(&[], None));
+    }
+
+    #[test]
+    fn test_write_atomic_replaces_whole_file() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, "a much longer previous content")?;
+
+        write_atomic(&path, "{}")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "{}");
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_operation_lock_is_exclusive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("lock");
+
+        let held = OperationLock::try_acquire(&path)?;
+        assert!(held.is_some());
+        assert!(OperationLock::try_acquire(&path)?.is_none());
+
+        drop(held);
+        assert!(OperationLock::try_acquire(&path)?.is_some());
+        Ok(())
     }
 }

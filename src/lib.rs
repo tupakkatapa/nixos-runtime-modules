@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs;
-use std::io;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
 // A module's state compares what was requested (the state file) with what the
@@ -226,28 +228,9 @@ impl ModuleFile {
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be written or permissions cannot be set.
+    /// Returns an error if the file cannot be written.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_ref = path.as_ref();
-        let path_str = path_ref.to_string_lossy();
-
-        let content = self.generate_content();
-        fs::write(path_ref, &content)
-            .with_context(|| format!("failed to write state file to {path_str}"))?;
-
-        // Fix permissions - set to 644 (rw-r--r--)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(path_ref)
-                .with_context(|| format!("failed to get metadata for {path_str}"))?
-                .permissions();
-            perms.set_mode(0o644);
-            fs::set_permissions(path_ref, perms)
-                .with_context(|| format!("failed to set permissions for {path_str}"))?;
-        }
-
-        Ok(())
+        write_atomic(path, &self.generate_content())
     }
 }
 
@@ -274,4 +257,87 @@ pub fn in_sync(requested: &[String], applied: Option<&[String]>) -> bool {
     applied.is_some_and(|applied| {
         requested.iter().collect::<HashSet<_>>() == applied.iter().collect::<HashSet<_>>()
     })
+}
+
+/// Replace a file through a rename, so readers see the old or the new content
+/// and never a partial write.
+///
+/// # Errors
+///
+/// Returns an error if the temporary file cannot be written or renamed.
+pub fn write_atomic<P: AsRef<Path>>(path: P, content: &str) -> Result<()> {
+    let path_ref = path.as_ref();
+    let path_str = path_ref.to_string_lossy();
+    let tmp = path_ref.with_file_name(format!(
+        ".{}.tmp",
+        path_ref.file_name().unwrap_or_default().to_string_lossy()
+    ));
+
+    let mut file = File::create(&tmp)
+        .with_context(|| format!("failed to create temporary file for {path_str}"))?;
+    file.write_all(content.as_bytes())
+        .and_then(|()| file.set_permissions(fs::Permissions::from_mode(0o644)))
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("failed to write {path_str}"))?;
+    fs::rename(&tmp, path_ref).with_context(|| format!("failed to replace {path_str}"))?;
+
+    Ok(())
+}
+
+// Exclusive lock serialising operations that change the system; released on drop
+pub struct OperationLock {
+    _file: File,
+}
+
+impl OperationLock {
+    /// Take the lock without waiting; `None` when another holder has it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the lock file cannot be opened or locked.
+    pub fn try_acquire<P: AsRef<Path>>(path: P) -> Result<Option<Self>> {
+        let file = Self::open(path.as_ref())?;
+        if Self::flock(&file, libc::LOCK_EX | libc::LOCK_NB)? {
+            Ok(Some(Self { _file: file }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Take the lock, calling `on_wait` once if another holder has it first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the lock file cannot be opened or locked.
+    pub fn acquire<P: AsRef<Path>>(path: P, on_wait: impl FnOnce()) -> Result<Self> {
+        if let Some(lock) = Self::try_acquire(&path)? {
+            return Ok(lock);
+        }
+        on_wait();
+        let file = Self::open(path.as_ref())?;
+        Self::flock(&file, libc::LOCK_EX)?;
+        Ok(Self { _file: file })
+    }
+
+    fn open(path: &Path) -> Result<File> {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .with_context(|| format!("failed to open lock file {}", path.to_string_lossy()))
+    }
+
+    // Ok(false) when non-blocking and already held
+    fn flock(file: &File, operation: libc::c_int) -> Result<bool> {
+        if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
+            return Ok(true);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::WouldBlock {
+            Ok(false)
+        } else {
+            Err(err).context("failed to lock")
+        }
+    }
 }

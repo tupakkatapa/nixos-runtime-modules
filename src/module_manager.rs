@@ -1,12 +1,13 @@
 use crate::system::apply_configuration;
 use anyhow::{Context, Result};
 use runtime_modules::{
-    ModuleFile, ModuleRegistry, ModuleState, ModuleStatus, in_sync, read_applied,
+    ModuleFile, ModuleRegistry, ModuleState, ModuleStatus, OperationLock, in_sync, read_applied,
 };
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
 const STATE_FILE: &str = "/run/runtime-modules/state.json";
+const LOCK_FILE: &str = "/run/runtime-modules/lock";
 const APPLIED_MARKER: &str = "/etc/runtime-modules-enabled";
 
 // ModuleManager handles the business logic
@@ -14,17 +15,32 @@ pub struct ModuleManager {
     registry: ModuleRegistry,
     module_file: ModuleFile,
     applied: Option<Vec<String>>,
+    _lock: Option<OperationLock>,
 }
 
 impl ModuleManager {
     // Initialize the manager by loading the registry, the requested modules and
     // the modules the running system was built with
     pub fn new() -> Result<Self> {
+        Self::load(None)
+    }
+
+    // Like new, but holds the operation lock until dropped, so that changes
+    // to the system happen one at a time
+    pub fn new_locked() -> Result<Self> {
+        let lock = OperationLock::acquire(LOCK_FILE, || {
+            println!("waiting for another runtime-modules operation to finish...");
+        })?;
+        Self::load(Some(lock))
+    }
+
+    fn load(lock: Option<OperationLock>) -> Result<Self> {
         Ok(Self {
             registry: ModuleRegistry::from_file(MODULES_JSON)
                 .context("failed to load module registry")?,
             module_file: ModuleFile::from_file(STATE_FILE).context("failed to load module file")?,
             applied: read_applied(APPLIED_MARKER).context("failed to read applied modules")?,
+            _lock: lock,
         })
     }
 
