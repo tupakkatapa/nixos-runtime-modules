@@ -2,15 +2,29 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::path::Path;
 
-// Module state enum
+// A module's state compares what was requested (the state file) with what the
+// running system was built with (the marker the runtime flake writes to /etc)
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub enum ModuleState {
     Enabled,
     #[default]
     Disabled,
     Uncertain,
+}
+
+impl ModuleState {
+    // `applied` is None when the running system does not say what it was built with
+    #[must_use]
+    pub fn of(requested: bool, applied: Option<bool>) -> Self {
+        match (requested, applied) {
+            (true, Some(true)) => Self::Enabled,
+            (false, Some(false)) => Self::Disabled,
+            _ => Self::Uncertain,
+        }
+    }
 }
 
 // Module data structures
@@ -33,8 +47,6 @@ pub struct Module {
     pub post_enable: Option<String>,
     #[serde(default)]
     pub post_disable: Option<String>,
-    #[serde(default)]
-    pub state: ModuleState,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,34 +92,6 @@ impl ModuleRegistry {
         Ok(registry)
     }
 
-    /// Save registry to file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be written or if the JSON serialization fails.
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_str = path.as_ref().to_string_lossy();
-        let content = serde_json::to_string_pretty(&self)
-            .with_context(|| "failed to serialize registry to JSON")?;
-
-        fs::write(&path, content)
-            .with_context(|| format!("failed to write registry to {path_str}"))?;
-
-        // Fix permissions - set to 644 (rw-r--r--)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path)
-                .with_context(|| format!("failed to get metadata for {path_str}"))?
-                .permissions();
-            perms.set_mode(0o644);
-            fs::set_permissions(&path, perms)
-                .with_context(|| format!("failed to set permissions for {path_str}"))?;
-        }
-
-        Ok(())
-    }
-
     // Initialize the lookup map for efficient module retrieval
     pub fn init_lookup(&mut self) {
         let mut map = HashMap::new();
@@ -115,66 +99,6 @@ impl ModuleRegistry {
             map.insert(module.name.clone(), index);
         }
         self.module_map = Some(map);
-    }
-
-    // Get module state by name
-    #[must_use]
-    pub fn get_state(&self, module_name: &str) -> ModuleState {
-        if let Some(map) = &self.module_map {
-            if let Some(index) = map.get(module_name) {
-                return self.modules[*index].state.clone();
-            }
-        } else {
-            // Fallback to linear search if map not initialized
-            for module in &self.modules {
-                if module.name == module_name {
-                    return module.state.clone();
-                }
-            }
-        }
-        ModuleState::Disabled // Default if not found
-    }
-
-    // Set module state
-    pub fn set_state(&mut self, module_name: &str, state: ModuleState) -> bool {
-        if let Some(map) = &self.module_map {
-            if let Some(index) = map.get(module_name) {
-                self.modules[*index].state = state;
-                return true;
-            }
-        } else {
-            // Fallback to linear search if map not initialized
-            for module in &mut self.modules {
-                if module.name == module_name {
-                    module.state = state;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    // Mark modules as uncertain
-    pub fn mark_uncertain(&mut self, modules: &[String]) {
-        for module_name in modules {
-            self.set_state(module_name, ModuleState::Uncertain);
-        }
-    }
-
-    // Confirm states based on active modules
-    pub fn confirm_states(&mut self, active_modules: &[String]) {
-        // Create set of active modules
-        let active_set: HashSet<_> = active_modules.iter().cloned().collect();
-
-        // Update all module states
-        for module in &mut self.modules {
-            let new_state = if active_set.contains(&module.name) {
-                ModuleState::Enabled
-            } else {
-                ModuleState::Disabled
-            };
-            module.state = new_state;
-        }
     }
 
     // Check if all modules exist in the registry
@@ -325,4 +249,29 @@ impl ModuleFile {
 
         Ok(())
     }
+}
+
+/// Read the modules the running system was built with. A missing marker means
+/// the base system; `None` means a marker without a module list.
+///
+/// # Errors
+///
+/// Returns an error if the marker exists but cannot be read.
+pub fn read_applied<P: AsRef<Path>>(path: P) -> Result<Option<Vec<String>>> {
+    let path_ref = path.as_ref();
+    match fs::read_to_string(path_ref) {
+        Ok(content) => Ok(serde_json::from_str::<StateFile>(&content)
+            .ok()
+            .map(|state| state.enabled)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Some(Vec::new())),
+        Err(e) => Err(e).with_context(|| format!("failed to read {}", path_ref.to_string_lossy())),
+    }
+}
+
+// Whether the running system was built with exactly the requested modules
+#[must_use]
+pub fn in_sync(requested: &[String], applied: Option<&[String]>) -> bool {
+    applied.is_some_and(|applied| {
+        requested.iter().collect::<HashSet<_>>() == applied.iter().collect::<HashSet<_>>()
+    })
 }

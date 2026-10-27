@@ -264,7 +264,7 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<()> {
 }
 
 fn cmd_rebuild(force: bool) -> Result<()> {
-    let mut manager =
+    let manager =
         ModuleManager::new().context("failed to initialize module manager for rebuild")?;
     manager.rebuild(force).context("failed to rebuild system")
 }

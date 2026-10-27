@@ -85,7 +85,6 @@ let
         inherit (module) name desc;
         postEnable = module.postEnable or "";
         postDisable = module.postDisable or "";
-        state = "Disabled";
       })
       allModules;
   };
@@ -125,8 +124,9 @@ let
           {
             nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
               modules = enabledImports ++ [
-                # Add a marker file to detect systems built using runtime-modules
-                { environment.etc."runtime-modules-enabled".text = "true"; }
+                # Marks a runtime-modules system and records the modules it was
+                # built with, which is what `runtime-modules status` reports
+                { environment.etc."runtime-modules-enabled".text = builtins.toJSON { enabled = map (m: m.name) enabledModules; }; }
               ];
             };
           };
