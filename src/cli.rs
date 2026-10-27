@@ -210,13 +210,13 @@ fn print_module_status(status: &ModuleStatus, max_name_length: usize) {
 
 fn cmd_reset(force: bool) -> Result<()> {
     let mut manager =
-        ModuleManager::new().context("failed to initialize module manager for reset")?;
+        ModuleManager::new_locked().context("failed to initialize module manager for reset")?;
     manager.reset(force).context("failed to reset modules")
 }
 
 fn cmd_enable(modules: &[String], force: bool) -> Result<()> {
-    let mut manager =
-        ModuleManager::new().context("failed to initialize module manager for enabling modules")?;
+    let mut manager = ModuleManager::new_locked()
+        .context("failed to initialize module manager for enabling modules")?;
     manager
         .enable_modules(modules, force)
         .with_context(|| format!("failed to enable modules: {modules:?}"))?;
@@ -224,7 +224,7 @@ fn cmd_enable(modules: &[String], force: bool) -> Result<()> {
 }
 
 fn cmd_disable(modules: &[String], force: bool) -> Result<()> {
-    let mut manager = ModuleManager::new()
+    let mut manager = ModuleManager::new_locked()
         .context("failed to initialize module manager for disabling modules")?;
     manager
         .disable_modules(modules, force)
@@ -264,8 +264,8 @@ fn cmd_status(modules: &[String], json_output: bool) -> Result<()> {
 }
 
 fn cmd_rebuild(force: bool) -> Result<()> {
-    let mut manager =
-        ModuleManager::new().context("failed to initialize module manager for rebuild")?;
+    let manager =
+        ModuleManager::new_locked().context("failed to initialize module manager for rebuild")?;
     manager.rebuild(force).context("failed to rebuild system")
 }
 

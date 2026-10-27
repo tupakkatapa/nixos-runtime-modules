@@ -1,8 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use anyhow::{Result, anyhow};
-    use runtime_modules::{Module, ModuleFile, ModuleRegistry, ModuleState};
-    use std::io::{self, Write};
+    use anyhow::Result;
+    use runtime_modules::{
+        Module, ModuleFile, ModuleRegistry, ModuleState, OperationLock, in_sync, read_applied,
+        write_atomic,
+    };
+    use std::io::Write;
     use tempfile::NamedTempFile;
 
     // Helper to create a test registry
@@ -14,7 +17,6 @@ mod tests {
                 desc: String::new(),
                 post_enable: None,
                 post_disable: None,
-                state: ModuleState::Disabled,
             },
             Module {
                 name: "test2".to_string(),
@@ -22,7 +24,6 @@ mod tests {
                 desc: String::new(),
                 post_enable: None,
                 post_disable: None,
-                state: ModuleState::Disabled,
             },
             Module {
                 name: "test3".to_string(),
@@ -30,25 +31,12 @@ mod tests {
                 desc: String::new(),
                 post_enable: None,
                 post_disable: None,
-                state: ModuleState::Disabled,
             },
         ];
 
         let mut registry = ModuleRegistry::new(modules);
         registry.init_lookup();
         registry
-    }
-
-    // Test error context and formatting
-    #[test]
-    fn test_error_handling() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let wrapped_err = anyhow::Error::new(io_err).context("failed to access file");
-
-        assert!(wrapped_err.to_string().contains("failed to access file"));
-
-        let missing_module_err = anyhow!("module not found: {}", "missing");
-        assert!(missing_module_err.to_string().contains("module not found"));
     }
 
     // Test registry initialization
@@ -61,7 +49,6 @@ mod tests {
                 desc: String::new(),
                 post_enable: None,
                 post_disable: None,
-                state: ModuleState::Disabled,
             },
             Module {
                 name: "test2".to_string(),
@@ -69,7 +56,6 @@ mod tests {
                 desc: String::new(),
                 post_enable: None,
                 post_disable: None,
-                state: ModuleState::Disabled,
             },
         ];
 
@@ -102,7 +88,7 @@ mod tests {
         }
         "#;
 
-        write!(temp_file, "{}", json_content)?;
+        write!(temp_file, "{json_content}")?;
 
         let registry = ModuleRegistry::from_file(temp_file.path())?;
 
@@ -122,7 +108,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         let json_content = r#"{"enabled":["test1","test2"]}"#;
 
-        write!(temp_file, "{}", json_content)?;
+        write!(temp_file, "{json_content}")?;
 
         let module_file = ModuleFile::from_file(temp_file.path())?;
 
@@ -258,32 +244,169 @@ mod tests {
         assert_eq!(test3_count, 1);
     }
 
-    // Test module state management
+    // The state of `module` given a state file and an applied marker, as the
+    // manager derives it; None stands for a missing file
+    fn state_of(
+        state_file: Option<&str>,
+        marker: Option<&str>,
+        module: &str,
+    ) -> Result<ModuleState> {
+        let dir = tempfile::tempdir()?;
+        let state_path = dir.path().join("state.json");
+        let marker_path = dir.path().join("runtime-modules-enabled");
+        if let Some(content) = state_file {
+            std::fs::write(&state_path, content)?;
+        }
+        if let Some(content) = marker {
+            std::fs::write(&marker_path, content)?;
+        }
+
+        let requested = ModuleFile::from_file(&state_path)?;
+        let applied = read_applied(&marker_path)?;
+        Ok(ModuleState::of(
+            requested.is_module_enabled(module),
+            applied.map(|applied| applied.iter().any(|name| name == module)),
+        ))
+    }
+
     #[test]
-    fn test_state_management() {
-        let mut registry = create_test_registry();
+    fn test_state_enabled_when_requested_and_applied() -> Result<()> {
+        let state = state_of(
+            Some(r#"{"enabled":["steam"]}"#),
+            Some(r#"{"enabled":["steam"]}"#),
+            "steam",
+        )?;
+        assert_eq!(state, ModuleState::Enabled);
+        Ok(())
+    }
 
-        // Test initial state
-        assert_eq!(registry.get_state("test1"), ModuleState::Disabled);
+    #[test]
+    fn test_state_disabled_on_base_system() -> Result<()> {
+        // After a reboot or a base rebuild: no state file, no marker
+        assert_eq!(state_of(None, None, "steam")?, ModuleState::Disabled);
+        Ok(())
+    }
 
-        // Test setting state
-        registry.set_state("test1", ModuleState::Enabled);
-        assert_eq!(registry.get_state("test1"), ModuleState::Enabled);
+    #[test]
+    fn test_state_disabled_when_neither_requested_nor_applied() -> Result<()> {
+        let state = state_of(
+            Some(r#"{"enabled":["docker"]}"#),
+            Some(r#"{"enabled":["docker"]}"#),
+            "steam",
+        )?;
+        assert_eq!(state, ModuleState::Disabled);
+        Ok(())
+    }
 
-        registry.set_state("test2", ModuleState::Uncertain);
-        assert_eq!(registry.get_state("test2"), ModuleState::Uncertain);
+    #[test]
+    fn test_state_uncertain_when_enable_never_activated() -> Result<()> {
+        // Rebuild interrupted, failed before activation, or still running
+        let state = state_of(Some(r#"{"enabled":["steam"]}"#), None, "steam")?;
+        assert_eq!(state, ModuleState::Uncertain);
+        let state = state_of(
+            Some(r#"{"enabled":["steam"]}"#),
+            Some(r#"{"enabled":[]}"#),
+            "steam",
+        )?;
+        assert_eq!(state, ModuleState::Uncertain);
+        Ok(())
+    }
 
-        // Test confirm states
-        let active_modules = vec!["test1".to_string(), "test3".to_string()];
-        registry.confirm_states(&active_modules);
+    #[test]
+    fn test_state_enabled_when_rebuild_failed_after_activation() -> Result<()> {
+        // A unit failing to restart makes nixos-rebuild fail after /etc was switched
+        let state = state_of(
+            Some(r#"{"enabled":["steam"]}"#),
+            Some(r#"{"enabled":["steam"]}"#),
+            "steam",
+        )?;
+        assert_eq!(state, ModuleState::Enabled);
+        Ok(())
+    }
 
-        // Should set test1 and test3 to Enabled, test2 to Disabled
-        assert_eq!(registry.get_state("test1"), ModuleState::Enabled);
-        assert_eq!(registry.get_state("test2"), ModuleState::Disabled);
-        assert_eq!(registry.get_state("test3"), ModuleState::Enabled);
+    #[test]
+    fn test_state_uncertain_when_disable_never_activated() -> Result<()> {
+        let state = state_of(
+            Some(r#"{"enabled":[]}"#),
+            Some(r#"{"enabled":["steam"]}"#),
+            "steam",
+        )?;
+        assert_eq!(state, ModuleState::Uncertain);
+        Ok(())
+    }
 
-        // Test mark uncertain
-        registry.mark_uncertain(&["test1".to_string()]);
-        assert_eq!(registry.get_state("test1"), ModuleState::Uncertain);
+    #[test]
+    fn test_state_uncertain_with_marker_without_module_list() -> Result<()> {
+        // Systems built before the marker recorded its modules
+        assert_eq!(
+            state_of(Some(r#"{"enabled":["steam"]}"#), Some("true"), "steam")?,
+            ModuleState::Uncertain
+        );
+        assert_eq!(
+            state_of(Some(r#"{"enabled":[]}"#), Some("true"), "steam")?,
+            ModuleState::Uncertain
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_retain_known_drops_removed_modules() {
+        let registry = create_test_registry();
+        let mut module_file = ModuleFile {
+            active_modules: vec!["test1".to_string(), "gone".to_string(), "test3".to_string()],
+        };
+
+        assert_eq!(
+            module_file.retain_known(&registry),
+            vec!["gone".to_string()]
+        );
+        assert_eq!(
+            module_file.active_modules,
+            vec!["test1".to_string(), "test3".to_string()]
+        );
+        assert!(module_file.retain_known(&registry).is_empty());
+    }
+
+    #[test]
+    fn test_in_sync() {
+        let a = vec!["steam".to_string(), "docker".to_string()];
+        let b = vec!["docker".to_string(), "steam".to_string()];
+        assert!(in_sync(&a, Some(&b)));
+        assert!(in_sync(&[], Some(&[])));
+        assert!(!in_sync(&a, Some(&b[..1])));
+        assert!(!in_sync(&[], None));
+    }
+
+    #[test]
+    fn test_write_atomic_replaces_whole_file() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("state.json");
+        std::fs::write(&path, "a much longer previous content")?;
+
+        write_atomic(&path, "{}")?;
+
+        assert_eq!(std::fs::read_to_string(&path)?, "{}");
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o644
+        );
+        assert_eq!(std::fs::read_dir(dir.path())?.count(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_operation_lock_is_exclusive() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("lock");
+
+        let held = OperationLock::try_acquire(&path)?;
+        assert!(held.is_some());
+        assert!(OperationLock::try_acquire(&path)?.is_none());
+
+        drop(held);
+        assert!(OperationLock::try_acquire(&path)?.is_some());
+        Ok(())
     }
 }

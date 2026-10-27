@@ -19,7 +19,7 @@ While [NixOS specialisations](https://nixos.wiki/wiki/Specialisation) might seem
 
 ## How It Works
 
-The system creates a temporary flake extending your base configuration with the specified modules. It maintains a runtime state in `/run/runtime-modules/` that tracks which modules are active. When you enable or disable modules, it updates this state and applies the changes using `nixos-rebuild test`.
+The system creates a temporary flake extending your base configuration with the specified modules. The requested modules are kept in `/run/runtime-modules/`, and the running system records which ones it was built with. When you enable or disable modules, it updates the request and applies it using `nixos-rebuild test`.
 
 ### Limitations
 

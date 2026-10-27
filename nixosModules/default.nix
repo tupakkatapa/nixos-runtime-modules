@@ -78,17 +78,15 @@ let
     # Force evaluation by accessing the derivation path
     builtins.seq eval.config.system.build.toplevel.drvPath true;
 
-  # Generate the modules.json content
-  modulesJson = builtins.toJSON {
+  modulesJson = pkgs.writeText "modules.json" (builtins.toJSON {
     modules = map
       (module: {
         inherit (module) name desc;
         postEnable = module.postEnable or "";
         postDisable = module.postDisable or "";
-        state = "Disabled";
       })
       allModules;
-  };
+  });
 
   # Build the Rust program
   moduleManagerRust = pkgs.callPackage ../package.nix {
@@ -125,8 +123,9 @@ let
           {
             nixosConfigurations.runtime = base.nixosConfigurations.${config.networking.hostName}.extendModules {
               modules = enabledImports ++ [
-                # Add a marker file to detect systems built using runtime-modules
-                { environment.etc."runtime-modules-enabled".text = "true"; }
+                # Marks a runtime-modules system and records the modules it was
+                # built with, which is what `runtime-modules status` reports
+                { environment.etc."runtime-modules-enabled".text = builtins.toJSON { enabled = map (m: m.name) enabledModules; }; }
               ];
             };
           };
@@ -240,8 +239,8 @@ in
       cp -f ${staticFlakeFile}/flake.nix ${dataDir}/flake.nix
       chmod 644 ${dataDir}/flake.nix
 
-      # Write the modules.json file
-      echo '${modulesJson}' > ${dataDir}/modules.json
+      # Copy the module registry
+      cp -f ${modulesJson} ${dataDir}/modules.json
       chmod 644 ${dataDir}/modules.json
 
       # Auto-reset state if not running on a runtime-modules system

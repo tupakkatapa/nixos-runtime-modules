@@ -1,98 +1,90 @@
 use crate::system::apply_configuration;
 use anyhow::{Context, Result};
-use runtime_modules::{ModuleFile, ModuleRegistry, ModuleState, ModuleStatus};
+use runtime_modules::{
+    ModuleFile, ModuleRegistry, ModuleState, ModuleStatus, OperationLock, in_sync, read_applied,
+};
+use std::path::PathBuf;
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
 const STATE_FILE: &str = "/run/runtime-modules/state.json";
+const LOCK_FILE: &str = "/run/runtime-modules/lock";
+const APPLIED_MARKER: &str = "/etc/runtime-modules-enabled";
 
 // ModuleManager handles the business logic
 pub struct ModuleManager {
     registry: ModuleRegistry,
     module_file: ModuleFile,
+    applied: Option<Vec<String>>,
+    state_file: PathBuf,
+    _lock: Option<OperationLock>,
 }
 
 impl ModuleManager {
-    // Initialize the manager by loading registry and module file
+    // Initialize the manager by loading the registry, the requested modules and
+    // the modules the running system was built with
     pub fn new() -> Result<Self> {
+        Self::load(None)
+    }
+
+    // Like new, but holds the operation lock until dropped, so that changes
+    // to the system happen one at a time
+    pub fn new_locked() -> Result<Self> {
+        let lock = OperationLock::acquire(LOCK_FILE, || {
+            println!("waiting for another runtime-modules operation to finish...");
+        })?;
+        Self::load(Some(lock))
+    }
+
+    fn load(lock: Option<OperationLock>) -> Result<Self> {
         let registry =
             ModuleRegistry::from_file(MODULES_JSON).context("failed to load module registry")?;
-        let module_file =
+        let mut module_file =
             ModuleFile::from_file(STATE_FILE).context("failed to load module file")?;
 
-        // Update the registry states based on active modules
-        let mut manager = Self {
+        // The base configuration no longer defines these, so no rebuild can apply them
+        for module in module_file.retain_known(&registry) {
+            eprintln!("warning: '{module}' module no longer exists, dropping it");
+        }
+
+        Ok(Self {
             registry,
             module_file,
-        };
-
-        // Sync state with module file at initialization
-        manager.sync_registry_with_module_file();
-
-        Ok(manager)
+            applied: read_applied(APPLIED_MARKER).context("failed to read applied modules")?,
+            state_file: STATE_FILE.into(),
+            _lock: lock,
+        })
     }
 
-    // Sync registry state with active modules in module file
-    fn sync_registry_with_module_file(&mut self) {
-        // Make sure modules in the module file are marked as Enabled in the registry
-        for module in &self.module_file.active_modules {
-            if self.registry.get_state(module) != ModuleState::Uncertain {
-                self.registry.set_state(module, ModuleState::Enabled);
-            }
-        }
+    fn state(&self, module: &str) -> ModuleState {
+        ModuleState::of(
+            self.module_file.is_module_enabled(module),
+            self.applied
+                .as_ref()
+                .map(|applied| applied.iter().any(|name| name == module)),
+        )
     }
 
-    // Helper method to get the effective state of a module
-    fn get_effective_state(&self, module: &str) -> ModuleState {
-        let is_in_config = self.module_file.is_module_enabled(module);
-        let state = self.registry.get_state(module);
+    fn status(&self, name: &str) -> ModuleStatus {
+        let module = self
+            .registry
+            .get_lookup_map()
+            .and_then(|map| map.get(name))
+            .map(|&index| &self.registry.modules[index]);
 
-        if state == ModuleState::Uncertain {
-            ModuleState::Uncertain
-        } else if is_in_config {
-            ModuleState::Enabled
-        } else {
-            ModuleState::Disabled
+        ModuleStatus {
+            name: name.to_string(),
+            path: module.map(|m| m.path.clone()).unwrap_or_default(),
+            state: self.state(name),
+            desc: module.map(|m| m.desc.clone()).unwrap_or_default(),
+            post_enable: module.and_then(|m| m.post_enable.clone()),
+            post_disable: module.and_then(|m| m.post_disable.clone()),
         }
     }
 
     // Get status for specific modules
     pub fn get_status(&self, modules: &[String]) -> Vec<ModuleStatus> {
-        modules
-            .iter()
-            .map(|module| {
-                let state = self.get_effective_state(module);
-
-                // Find module in registry for details
-                let module_index = self
-                    .registry
-                    .get_lookup_map()
-                    .and_then(|map| map.get(module))
-                    .copied();
-
-                if let Some(index) = module_index {
-                    let registry_module = &self.registry.modules[index];
-                    ModuleStatus {
-                        name: module.clone(),
-                        path: registry_module.path.clone(),
-                        state,
-                        desc: registry_module.desc.clone(),
-                        post_enable: registry_module.post_enable.clone(),
-                        post_disable: registry_module.post_disable.clone(),
-                    }
-                } else {
-                    // Fallback if module not found
-                    ModuleStatus {
-                        name: module.clone(),
-                        path: String::new(),
-                        state,
-                        desc: String::new(),
-                        post_enable: None,
-                        post_disable: None,
-                    }
-                }
-            })
-            .collect()
+        modules.iter().map(|module| self.status(module)).collect()
     }
 
     // Get status for all modules
@@ -100,149 +92,79 @@ impl ModuleManager {
         self.registry
             .modules
             .iter()
-            .map(|module| {
-                let name = &module.name;
-                let state = self.get_effective_state(name);
-
-                ModuleStatus {
-                    name: name.clone(),
-                    path: module.path.clone(),
-                    state,
-                    desc: module.desc.clone(),
-                    post_enable: module.post_enable.clone(),
-                    post_disable: module.post_disable.clone(),
-                }
-            })
+            .map(|module| self.status(&module.name))
             .collect()
     }
 
-    // Apply changes and persist state
-    fn apply_changes(&mut self, _force: bool, action_msg: &str) -> Result<()> {
-        // Save the state file
+    fn warn_uncertain(&self, module: &str) {
+        match &self.applied {
+            None => eprintln!(
+                "warning: '{module}' module state is unknown, the running system does not record its modules"
+            ),
+            Some(applied) if applied.iter().any(|name| name == module) => {
+                eprintln!("warning: '{module}' module is active but not requested");
+            }
+            Some(_) => eprintln!("warning: '{module}' module is requested but not active"),
+        }
+    }
+
+    // Save the requested modules, then rebuild with them unless the running
+    // system already has exactly them. The state file is the input of the
+    // rebuild; the outcome is read back from the running system, not recorded.
+    fn apply_changes(
+        &self,
+        force: bool,
+        action_msg: &str,
+        rebuild: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
         self.module_file
-            .save(STATE_FILE)
-            .with_context(|| format!("failed to save state file after {action_msg}"))?;
-        println!("saved state to '{STATE_FILE}'");
+            .save(&self.state_file)
+            .with_context(|| format!("failed to save state file before {action_msg}"))?;
+        println!("saved state to '{}'", self.state_file.display());
 
-        // Apply configuration
-        match apply_configuration() {
-            Ok(()) => {
-                println!("{action_msg} successfully");
-                // Confirm states after successful rebuild
-                self.registry
-                    .confirm_states(&self.module_file.active_modules);
-                self.registry
-                    .save(MODULES_JSON)
-                    .context("failed to save registry after successful rebuild")?;
-                Ok(())
-            }
-            Err(e) => {
-                println!("warning: modules in uncertain state due to rebuild failure");
-                // Mark relevant modules as uncertain
-                self.registry
-                    .mark_uncertain(&self.module_file.active_modules);
-                self.registry
-                    .save(MODULES_JSON)
-                    .context("failed to save registry after rebuild failure")?;
-                Err(e)
-            }
-        }
-    }
-
-    // Enable modules with state tracking
-    pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<bool> {
-        let mut changes = false;
-
-        // Display status and mark modules for change
-        for module in modules {
-            let current_state = self.get_effective_state(module);
-
-            match current_state {
-                ModuleState::Enabled => {
-                    println!("'{module}' module is already enabled");
-                }
-                ModuleState::Uncertain => {
-                    println!("warning: '{module}' module is in an uncertain state");
-                    changes = true;
-                }
-                ModuleState::Disabled => {
-                    self.registry.set_state(module, ModuleState::Uncertain);
-                    changes = true;
-                }
-            }
-        }
-
-        // Update the module file
-        let file_changes = self.module_file.enable_modules(modules);
-        changes = changes || file_changes;
-
-        // If changes were made or force is set, apply them
-        if changes || force {
-            self.apply_changes(force, "modules enabled")?;
-        } else {
+        if !force && in_sync(&self.module_file.active_modules, self.applied.as_deref()) {
             println!("no changes needed, skipping rebuild");
-        }
-
-        Ok(changes)
-    }
-
-    // Disable modules with state tracking
-    pub fn disable_modules(&mut self, modules: &[String], force: bool) -> Result<bool> {
-        let mut changes = false;
-
-        // Display status and mark modules for change
-        for module in modules {
-            let current_state = self.get_effective_state(module);
-
-            match current_state {
-                ModuleState::Enabled => {
-                    println!("disabling '{module}' module...");
-                    self.registry.set_state(module, ModuleState::Uncertain);
-                    changes = true;
-                }
-                ModuleState::Uncertain => {
-                    println!("warning: '{module}' module is in an uncertain state");
-                    changes = true;
-                }
-                ModuleState::Disabled => {
-                    println!("'{module}' module is already disabled");
-                }
-            }
-        }
-
-        // Update the module file
-        let file_changes = self.module_file.disable_modules(modules);
-        changes = changes || file_changes;
-
-        // If changes were made or force is set, apply them
-        if changes || force {
-            self.apply_changes(force, "modules disabled")?;
-        } else {
-            println!("no changes needed, skipping rebuild");
-        }
-
-        Ok(changes)
-    }
-
-    // Reset to base system with state tracking
-    pub fn reset(&mut self, force: bool) -> Result<()> {
-        println!("resetting to base system...");
-
-        // If we already have an empty state and force is false, skip
-        if self.module_file.active_modules.is_empty() && !force {
-            println!("system already at base state, skipping rebuild");
             return Ok(());
         }
 
-        // Mark all active modules as uncertain
-        self.registry
-            .mark_uncertain(&self.module_file.active_modules);
+        rebuild()?;
+        println!("{action_msg} successfully");
+        Ok(())
+    }
 
-        // Create empty module file
+    // Enable modules, rebuilding unless the running system already has them
+    pub fn enable_modules(&mut self, modules: &[String], force: bool) -> Result<()> {
+        for module in modules {
+            match self.state(module) {
+                ModuleState::Enabled => println!("'{module}' module is already enabled"),
+                ModuleState::Uncertain => self.warn_uncertain(module),
+                ModuleState::Disabled => {}
+            }
+        }
+
+        self.module_file.enable_modules(modules);
+        self.apply_changes(force, "modules enabled", apply_configuration)
+    }
+
+    // Disable modules, rebuilding unless the running system already lacks them
+    pub fn disable_modules(&mut self, modules: &[String], force: bool) -> Result<()> {
+        for module in modules {
+            match self.state(module) {
+                ModuleState::Enabled => println!("disabling '{module}' module..."),
+                ModuleState::Uncertain => self.warn_uncertain(module),
+                ModuleState::Disabled => println!("'{module}' module is already disabled"),
+            }
+        }
+
+        self.module_file.disable_modules(modules);
+        self.apply_changes(force, "modules disabled", apply_configuration)
+    }
+
+    // Reset to the base system
+    pub fn reset(&mut self, force: bool) -> Result<()> {
+        println!("resetting to base system...");
         self.module_file = ModuleFile::empty();
-
-        // Apply changes - use the force parameter passed to the method
-        self.apply_changes(force, "system reset")
+        self.apply_changes(force, "system reset", apply_configuration)
     }
 
     // Verify that modules exist in the registry
@@ -251,7 +173,7 @@ impl ModuleManager {
     }
 
     // Rebuild the system with currently enabled modules
-    pub fn rebuild(&mut self, force: bool) -> Result<()> {
+    pub fn rebuild(&self, force: bool) -> Result<()> {
         if self.module_file.active_modules.is_empty() && !force {
             println!("no active modules to rebuild");
             return Ok(());
@@ -268,7 +190,77 @@ impl ModuleManager {
             }
         }
 
-        // Apply changes
-        self.apply_changes(force, "system rebuilt")
+        self.apply_changes(true, "system rebuilt", apply_configuration)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn manager(requested: &[&str], applied: &[&str], dir: &std::path::Path) -> ModuleManager {
+        let mut module_file = ModuleFile::empty();
+        module_file.enable_modules(
+            &requested
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        );
+        ModuleManager {
+            registry: ModuleRegistry::new(Vec::new()),
+            module_file,
+            applied: Some(applied.iter().map(ToString::to_string).collect()),
+            state_file: dir.join("state.json"),
+            _lock: None,
+        }
+    }
+
+    #[test]
+    fn apply_changes_saves_request_without_rebuild_when_in_sync() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&["steam"], &["steam"], dir.path());
+
+        manager.apply_changes(false, "test", || panic!("rebuilt an in-sync system"))?;
+
+        assert_eq!(
+            ModuleFile::from_file(&manager.state_file)?.active_modules,
+            vec!["steam".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_changes_saves_then_rebuilds_when_out_of_sync() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&["steam"], &[], dir.path());
+        let rebuilt = Cell::new(false);
+
+        manager.apply_changes(false, "test", || {
+            rebuilt.set(true);
+            Ok(())
+        })?;
+
+        assert!(rebuilt.get());
+        assert_eq!(
+            ModuleFile::from_file(&manager.state_file)?.active_modules,
+            vec!["steam".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_changes_rebuilds_in_sync_system_when_forced() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&[], &[], dir.path());
+        let rebuilt = Cell::new(false);
+
+        manager.apply_changes(true, "test", || {
+            rebuilt.set(true);
+            Ok(())
+        })?;
+
+        assert!(rebuilt.get());
+        Ok(())
     }
 }

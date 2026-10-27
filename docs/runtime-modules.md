@@ -12,7 +12,7 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
     runtime-modules.url = "github:tupakkatapa/nixos-runtime-modules";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
-  outputs = { self, ... }@inputs: {
+  outputs = { self, nixpkgs, ... }@inputs: {
     nixosConfigurations = {
       yourhostname = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
@@ -79,12 +79,14 @@ Commands that modify system state require root privileges. The CLI will automati
 
 ### Commands
 
-- `enable <modules...>`: Updates state, runs `nix flake update`, then `nixos-rebuild test`. Already-enabled modules are skipped; use `--force` to rebuild anyway. Runs `postEnable` hooks after successful rebuild.
+- `enable <modules...>`: Updates state, runs `nix flake update`, then `nixos-rebuild test`. Skips the rebuild when the running system already has exactly the requested modules; use `--force` to rebuild anyway. Runs `postEnable` hooks after successful rebuild.
 - `disable <modules...>`: Same rebuild flow as `enable`. Runs `postDisable` hooks after success.
-- `reset`: Disables all modules, reverts to base system. Skips rebuild if already at base state unless `--force`.
+- `reset`: Disables all modules, reverts to base system. Skips the rebuild when the running system already has no modules unless `--force`.
 - `status <modules...>`: Prints `enabled`, `disabled`, or `uncertain` per module. Exits non-zero if any module is not fully enabled — useful for scripting.
 - `list`: Lists all modules grouped into user and upstream sections. State markers: `[✓]` enabled, `[ ]` disabled, `[?]` uncertain.
 - `rebuild`: Rebuilds with currently enabled modules without changing state. Use to recover from a failed rebuild.
+
+Commands that change the system run one at a time; a second one waits for the first to finish.
 
 ### Options
 
@@ -105,17 +107,17 @@ Commands that modify system state require root privileges. The CLI will automati
     "upstream_modules": []
   }
   ```
-- `--force`, `-f`: Force rebuild even when no state changes are detected.
+- `--force`, `-f`: Force rebuild even when the running system already has the requested modules.
 - `--help`, `-h`: Print help.
 - `--version`, `-V`: Print version.
 
 ## Module States
 
-- **Enabled**: Active, rebuild succeeded.
-- **Disabled**: Not active.
-- **Uncertain**: Rebuild failed mid-way. Resolve with `rebuild` or `reset`.
+- **Enabled**: Requested, and the running system was built with it.
+- **Disabled**: Neither requested nor in the running system.
+- **Uncertain**: Requested modules and the running system differ: a rebuild is in progress, was interrupted, or failed before activating. Running the same command again rebuilds.
 
-State lives in `/run/runtime-modules/` (tmpfs). Reboot reverts to base system.
+The running system records the modules it was built with in `/etc/runtime-modules-enabled`. Requested modules live in `/run/runtime-modules/` (tmpfs), so a reboot reverts to the base system.
 
 ## Hooks
 
@@ -146,6 +148,6 @@ Available when `builtinModules.enable = true`. All prefixed with `rt.`.
 ## Troubleshooting
 
 - **"one or more modules not found"**: Name mismatch. Check `runtime-modules list`.
-- **Stuck in uncertain state**: Previous rebuild failed, module might still be functional. Run `sudo runtime-modules rebuild` or `reset` to resolve.
+- **Stuck in uncertain state**: The last rebuild did not activate. Run the same command again, `sudo runtime-modules rebuild`, or `reset`.
 - **Hooks not running**: Only run after successful enable/disable. Hook output is discarded; test manually first.
 - **State reset on reboot**: By design. `/run` is tmpfs.

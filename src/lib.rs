@@ -1,16 +1,32 @@
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::os::unix::io::AsRawFd;
 use std::path::Path;
 
-// Module state enum
+// A module's state compares what was requested (the state file) with what the
+// running system was built with (the marker the runtime flake writes to /etc)
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Default)]
 pub enum ModuleState {
     Enabled,
     #[default]
     Disabled,
     Uncertain,
+}
+
+impl ModuleState {
+    // `applied` is None when the running system does not say what it was built with
+    #[must_use]
+    pub fn of(requested: bool, applied: Option<bool>) -> Self {
+        match (requested, applied) {
+            (true, Some(true)) => Self::Enabled,
+            (false, Some(false)) => Self::Disabled,
+            _ => Self::Uncertain,
+        }
+    }
 }
 
 // Module data structures
@@ -33,8 +49,6 @@ pub struct Module {
     pub post_enable: Option<String>,
     #[serde(default)]
     pub post_disable: Option<String>,
-    #[serde(default)]
-    pub state: ModuleState,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -80,34 +94,6 @@ impl ModuleRegistry {
         Ok(registry)
     }
 
-    /// Save registry to file
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the file cannot be written or if the JSON serialization fails.
-    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_str = path.as_ref().to_string_lossy();
-        let content = serde_json::to_string_pretty(&self)
-            .with_context(|| "failed to serialize registry to JSON")?;
-
-        fs::write(&path, content)
-            .with_context(|| format!("failed to write registry to {path_str}"))?;
-
-        // Fix permissions - set to 644 (rw-r--r--)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(&path)
-                .with_context(|| format!("failed to get metadata for {path_str}"))?
-                .permissions();
-            perms.set_mode(0o644);
-            fs::set_permissions(&path, perms)
-                .with_context(|| format!("failed to set permissions for {path_str}"))?;
-        }
-
-        Ok(())
-    }
-
     // Initialize the lookup map for efficient module retrieval
     pub fn init_lookup(&mut self) {
         let mut map = HashMap::new();
@@ -115,66 +101,6 @@ impl ModuleRegistry {
             map.insert(module.name.clone(), index);
         }
         self.module_map = Some(map);
-    }
-
-    // Get module state by name
-    #[must_use]
-    pub fn get_state(&self, module_name: &str) -> ModuleState {
-        if let Some(map) = &self.module_map {
-            if let Some(index) = map.get(module_name) {
-                return self.modules[*index].state.clone();
-            }
-        } else {
-            // Fallback to linear search if map not initialized
-            for module in &self.modules {
-                if module.name == module_name {
-                    return module.state.clone();
-                }
-            }
-        }
-        ModuleState::Disabled // Default if not found
-    }
-
-    // Set module state
-    pub fn set_state(&mut self, module_name: &str, state: ModuleState) -> bool {
-        if let Some(map) = &self.module_map {
-            if let Some(index) = map.get(module_name) {
-                self.modules[*index].state = state;
-                return true;
-            }
-        } else {
-            // Fallback to linear search if map not initialized
-            for module in &mut self.modules {
-                if module.name == module_name {
-                    module.state = state;
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    // Mark modules as uncertain
-    pub fn mark_uncertain(&mut self, modules: &[String]) {
-        for module_name in modules {
-            self.set_state(module_name, ModuleState::Uncertain);
-        }
-    }
-
-    // Confirm states based on active modules
-    pub fn confirm_states(&mut self, active_modules: &[String]) {
-        // Create set of active modules
-        let active_set: HashSet<_> = active_modules.iter().cloned().collect();
-
-        // Update all module states
-        for module in &mut self.modules {
-            let new_state = if active_set.contains(&module.name) {
-                ModuleState::Enabled
-            } else {
-                ModuleState::Disabled
-            };
-            module.state = new_state;
-        }
     }
 
     // Check if all modules exist in the registry
@@ -278,6 +204,16 @@ impl ModuleFile {
         changes
     }
 
+    // Drop requested modules the registry no longer has, returning their names
+    pub fn retain_known(&mut self, registry: &ModuleRegistry) -> Vec<String> {
+        let (known, unknown) = self
+            .active_modules
+            .drain(..)
+            .partition(|module| registry.verify_modules_exist(std::slice::from_ref(module)));
+        self.active_modules = known;
+        unknown
+    }
+
     // Disable modules and return if changes were made
     pub fn disable_modules(&mut self, modules: &[String]) -> bool {
         let disable_set: HashSet<_> = modules.iter().collect();
@@ -302,27 +238,115 @@ impl ModuleFile {
     ///
     /// # Errors
     ///
-    /// Returns an error if the file cannot be written or permissions cannot be set.
+    /// Returns an error if the file cannot be written.
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let path_ref = path.as_ref();
-        let path_str = path_ref.to_string_lossy();
+        write_atomic(path, &self.generate_content())
+    }
+}
 
-        let content = self.generate_content();
-        fs::write(path_ref, &content)
-            .with_context(|| format!("failed to write state file to {path_str}"))?;
+/// Read the modules the running system was built with. A missing marker means
+/// the base system; `None` means a marker without a module list.
+///
+/// # Errors
+///
+/// Returns an error if the marker exists but cannot be read.
+pub fn read_applied<P: AsRef<Path>>(path: P) -> Result<Option<Vec<String>>> {
+    let path_ref = path.as_ref();
+    match fs::read_to_string(path_ref) {
+        Ok(content) => Ok(serde_json::from_str::<StateFile>(&content)
+            .ok()
+            .map(|state| state.enabled)),
+        Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(Some(Vec::new())),
+        Err(e) => Err(e).with_context(|| format!("failed to read {}", path_ref.to_string_lossy())),
+    }
+}
 
-        // Fix permissions - set to 644 (rw-r--r--)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(path_ref)
-                .with_context(|| format!("failed to get metadata for {path_str}"))?
-                .permissions();
-            perms.set_mode(0o644);
-            fs::set_permissions(path_ref, perms)
-                .with_context(|| format!("failed to set permissions for {path_str}"))?;
+// Whether the running system was built with exactly the requested modules
+#[must_use]
+pub fn in_sync(requested: &[String], applied: Option<&[String]>) -> bool {
+    applied.is_some_and(|applied| {
+        requested.iter().collect::<HashSet<_>>() == applied.iter().collect::<HashSet<_>>()
+    })
+}
+
+/// Replace a file through a rename, so readers see the old or the new content
+/// and never a partial write.
+///
+/// # Errors
+///
+/// Returns an error if the temporary file cannot be written or renamed.
+pub fn write_atomic<P: AsRef<Path>>(path: P, content: &str) -> Result<()> {
+    let path_ref = path.as_ref();
+    let path_str = path_ref.to_string_lossy();
+    let tmp = path_ref.with_file_name(format!(
+        ".{}.tmp",
+        path_ref.file_name().unwrap_or_default().to_string_lossy()
+    ));
+
+    let mut file = File::create(&tmp)
+        .with_context(|| format!("failed to create temporary file for {path_str}"))?;
+    file.write_all(content.as_bytes())
+        .and_then(|()| file.set_permissions(fs::Permissions::from_mode(0o644)))
+        .and_then(|()| file.sync_all())
+        .with_context(|| format!("failed to write {path_str}"))?;
+    fs::rename(&tmp, path_ref).with_context(|| format!("failed to replace {path_str}"))?;
+
+    Ok(())
+}
+
+// Exclusive lock serialising operations that change the system; released on drop
+pub struct OperationLock {
+    _file: File,
+}
+
+impl OperationLock {
+    /// Take the lock without waiting; `None` when another holder has it.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the lock file cannot be opened or locked.
+    pub fn try_acquire<P: AsRef<Path>>(path: P) -> Result<Option<Self>> {
+        let file = Self::open(path.as_ref())?;
+        if Self::flock(&file, libc::LOCK_EX | libc::LOCK_NB)? {
+            Ok(Some(Self { _file: file }))
+        } else {
+            Ok(None)
         }
+    }
 
-        Ok(())
+    /// Take the lock, calling `on_wait` once if another holder has it first.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the lock file cannot be opened or locked.
+    pub fn acquire<P: AsRef<Path>>(path: P, on_wait: impl FnOnce()) -> Result<Self> {
+        let file = Self::open(path.as_ref())?;
+        if !Self::flock(&file, libc::LOCK_EX | libc::LOCK_NB)? {
+            on_wait();
+            Self::flock(&file, libc::LOCK_EX)?;
+        }
+        Ok(Self { _file: file })
+    }
+
+    fn open(path: &Path) -> Result<File> {
+        OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(false)
+            .open(path)
+            .with_context(|| format!("failed to open lock file {}", path.to_string_lossy()))
+    }
+
+    // Ok(false) when non-blocking and already held
+    fn flock(file: &File, operation: libc::c_int) -> Result<bool> {
+        if unsafe { libc::flock(file.as_raw_fd(), operation) } == 0 {
+            return Ok(true);
+        }
+        let err = io::Error::last_os_error();
+        if err.kind() == io::ErrorKind::WouldBlock {
+            Ok(false)
+        } else {
+            Err(err).context("failed to lock")
+        }
     }
 }

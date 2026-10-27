@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 
 mod cli;
@@ -19,5 +19,5 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     // Execute the appropriate command
-    execute_command(&cli).with_context(|| "command execution failed")
+    execute_command(&cli)
 }
