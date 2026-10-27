@@ -320,12 +320,11 @@ impl OperationLock {
     ///
     /// Returns an error if the lock file cannot be opened or locked.
     pub fn acquire<P: AsRef<Path>>(path: P, on_wait: impl FnOnce()) -> Result<Self> {
-        if let Some(lock) = Self::try_acquire(&path)? {
-            return Ok(lock);
-        }
-        on_wait();
         let file = Self::open(path.as_ref())?;
-        Self::flock(&file, libc::LOCK_EX)?;
+        if !Self::flock(&file, libc::LOCK_EX | libc::LOCK_NB)? {
+            on_wait();
+            Self::flock(&file, libc::LOCK_EX)?;
+        }
         Ok(Self { _file: file })
     }
 
