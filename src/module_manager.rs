@@ -3,6 +3,7 @@ use anyhow::{Context, Result};
 use runtime_modules::{
     ModuleFile, ModuleRegistry, ModuleState, ModuleStatus, OperationLock, in_sync, read_applied,
 };
+use std::path::PathBuf;
 
 // Constants
 const MODULES_JSON: &str = "/run/runtime-modules/modules.json";
@@ -15,6 +16,7 @@ pub struct ModuleManager {
     registry: ModuleRegistry,
     module_file: ModuleFile,
     applied: Option<Vec<String>>,
+    state_file: PathBuf,
     _lock: Option<OperationLock>,
 }
 
@@ -49,6 +51,7 @@ impl ModuleManager {
             registry,
             module_file,
             applied: read_applied(APPLIED_MARKER).context("failed to read applied modules")?,
+            state_file: STATE_FILE.into(),
             _lock: lock,
         })
     }
@@ -105,21 +108,26 @@ impl ModuleManager {
         }
     }
 
-    // Rebuild with the requested modules, unless the running system already has
-    // exactly them. The state file is the input of the rebuild, so it is saved
-    // first; the outcome is read back from the running system, not recorded.
-    fn apply_changes(&self, force: bool, action_msg: &str) -> Result<()> {
+    // Save the requested modules, then rebuild with them unless the running
+    // system already has exactly them. The state file is the input of the
+    // rebuild; the outcome is read back from the running system, not recorded.
+    fn apply_changes(
+        &self,
+        force: bool,
+        action_msg: &str,
+        rebuild: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        self.module_file
+            .save(&self.state_file)
+            .with_context(|| format!("failed to save state file before {action_msg}"))?;
+        println!("saved state to '{}'", self.state_file.display());
+
         if !force && in_sync(&self.module_file.active_modules, self.applied.as_deref()) {
             println!("no changes needed, skipping rebuild");
             return Ok(());
         }
 
-        self.module_file
-            .save(STATE_FILE)
-            .with_context(|| format!("failed to save state file before {action_msg}"))?;
-        println!("saved state to '{STATE_FILE}'");
-
-        apply_configuration()?;
+        rebuild()?;
         println!("{action_msg} successfully");
         Ok(())
     }
@@ -135,7 +143,7 @@ impl ModuleManager {
         }
 
         self.module_file.enable_modules(modules);
-        self.apply_changes(force, "modules enabled")
+        self.apply_changes(force, "modules enabled", apply_configuration)
     }
 
     // Disable modules, rebuilding unless the running system already lacks them
@@ -149,14 +157,14 @@ impl ModuleManager {
         }
 
         self.module_file.disable_modules(modules);
-        self.apply_changes(force, "modules disabled")
+        self.apply_changes(force, "modules disabled", apply_configuration)
     }
 
     // Reset to the base system
     pub fn reset(&mut self, force: bool) -> Result<()> {
         println!("resetting to base system...");
         self.module_file = ModuleFile::empty();
-        self.apply_changes(force, "system reset")
+        self.apply_changes(force, "system reset", apply_configuration)
     }
 
     // Verify that modules exist in the registry
@@ -182,6 +190,77 @@ impl ModuleManager {
             }
         }
 
-        self.apply_changes(true, "system rebuilt")
+        self.apply_changes(true, "system rebuilt", apply_configuration)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::Cell;
+
+    fn manager(requested: &[&str], applied: &[&str], dir: &std::path::Path) -> ModuleManager {
+        let mut module_file = ModuleFile::empty();
+        module_file.enable_modules(
+            &requested
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>(),
+        );
+        ModuleManager {
+            registry: ModuleRegistry::new(Vec::new()),
+            module_file,
+            applied: Some(applied.iter().map(ToString::to_string).collect()),
+            state_file: dir.join("state.json"),
+            _lock: None,
+        }
+    }
+
+    #[test]
+    fn apply_changes_saves_request_without_rebuild_when_in_sync() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&["steam"], &["steam"], dir.path());
+
+        manager.apply_changes(false, "test", || panic!("rebuilt an in-sync system"))?;
+
+        assert_eq!(
+            ModuleFile::from_file(&manager.state_file)?.active_modules,
+            vec!["steam".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_changes_saves_then_rebuilds_when_out_of_sync() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&["steam"], &[], dir.path());
+        let rebuilt = Cell::new(false);
+
+        manager.apply_changes(false, "test", || {
+            rebuilt.set(true);
+            Ok(())
+        })?;
+
+        assert!(rebuilt.get());
+        assert_eq!(
+            ModuleFile::from_file(&manager.state_file)?.active_modules,
+            vec!["steam".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn apply_changes_rebuilds_in_sync_system_when_forced() -> Result<()> {
+        let dir = tempfile::tempdir()?;
+        let manager = manager(&[], &[], dir.path());
+        let rebuilt = Cell::new(false);
+
+        manager.apply_changes(true, "test", || {
+            rebuilt.set(true);
+            Ok(())
+        })?;
+
+        assert!(rebuilt.get());
+        Ok(())
     }
 }
