@@ -12,7 +12,7 @@ Add this repository as a Nix flake input, then enable the module in your NixOS c
     runtime-modules.url = "github:tupakkatapa/nixos-runtime-modules";
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
   };
-  outputs = { self, ... }@inputs: {
+  outputs = { self, nixpkgs, ... }@inputs: {
     nixosConfigurations = {
       yourhostname = nixpkgs.lib.nixosSystem {
         system = "x86_64-linux";
@@ -107,7 +107,7 @@ Commands that change the system run one at a time; a second one waits for the fi
     "upstream_modules": []
   }
   ```
-- `--force`, `-f`: Force rebuild even when no state changes are detected.
+- `--force`, `-f`: Force rebuild even when the running system already has the requested modules.
 - `--help`, `-h`: Print help.
 - `--version`, `-V`: Print version.
 
