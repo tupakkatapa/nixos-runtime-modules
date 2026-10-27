@@ -44,7 +44,7 @@ impl ModuleManager {
 
         // The base configuration no longer defines these, so no rebuild can apply them
         for module in module_file.retain_known(&registry) {
-            println!("warning: '{module}' module no longer exists, dropping it");
+            eprintln!("warning: '{module}' module no longer exists, dropping it");
         }
 
         Ok(Self {
@@ -98,13 +98,13 @@ impl ModuleManager {
 
     fn warn_uncertain(&self, module: &str) {
         match &self.applied {
-            None => println!(
+            None => eprintln!(
                 "warning: '{module}' module state is unknown, the running system does not record its modules"
             ),
             Some(applied) if applied.iter().any(|name| name == module) => {
-                println!("warning: '{module}' module is active but not requested");
+                eprintln!("warning: '{module}' module is active but not requested");
             }
-            Some(_) => println!("warning: '{module}' module is requested but not active"),
+            Some(_) => eprintln!("warning: '{module}' module is requested but not active"),
         }
     }
 
