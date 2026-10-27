@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-27
+
 ### Changed
 - Module state is read from the running system, which now records its modules in `/etc/runtime-modules-enabled`
 - `enable`, `disable` and `reset` rebuild whenever the running system differs from the requested modules
@@ -20,7 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Module descriptions containing `'` no longer break activation
 - Requested modules that no longer exist are dropped instead of forcing a rebuild on every run
 
-## [0.3.0] - 2026-10-27
+## [0.3.0] - 2026-07-04
 
 ### Changed
 - Bumped nixpkgs to `nixos-26.05`
