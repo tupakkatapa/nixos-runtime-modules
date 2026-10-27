@@ -53,43 +53,26 @@ impl ModuleManager {
         )
     }
 
+    fn status(&self, name: &str) -> ModuleStatus {
+        let module = self
+            .registry
+            .get_lookup_map()
+            .and_then(|map| map.get(name))
+            .map(|&index| &self.registry.modules[index]);
+
+        ModuleStatus {
+            name: name.to_string(),
+            path: module.map(|m| m.path.clone()).unwrap_or_default(),
+            state: self.state(name),
+            desc: module.map(|m| m.desc.clone()).unwrap_or_default(),
+            post_enable: module.and_then(|m| m.post_enable.clone()),
+            post_disable: module.and_then(|m| m.post_disable.clone()),
+        }
+    }
+
     // Get status for specific modules
     pub fn get_status(&self, modules: &[String]) -> Vec<ModuleStatus> {
-        modules
-            .iter()
-            .map(|module| {
-                let state = self.state(module);
-
-                // Find module in registry for details
-                let module_index = self
-                    .registry
-                    .get_lookup_map()
-                    .and_then(|map| map.get(module))
-                    .copied();
-
-                if let Some(index) = module_index {
-                    let registry_module = &self.registry.modules[index];
-                    ModuleStatus {
-                        name: module.clone(),
-                        path: registry_module.path.clone(),
-                        state,
-                        desc: registry_module.desc.clone(),
-                        post_enable: registry_module.post_enable.clone(),
-                        post_disable: registry_module.post_disable.clone(),
-                    }
-                } else {
-                    // Fallback if module not found
-                    ModuleStatus {
-                        name: module.clone(),
-                        path: String::new(),
-                        state,
-                        desc: String::new(),
-                        post_enable: None,
-                        post_disable: None,
-                    }
-                }
-            })
-            .collect()
+        modules.iter().map(|module| self.status(module)).collect()
     }
 
     // Get status for all modules
@@ -97,14 +80,7 @@ impl ModuleManager {
         self.registry
             .modules
             .iter()
-            .map(|module| ModuleStatus {
-                name: module.name.clone(),
-                path: module.path.clone(),
-                state: self.state(&module.name),
-                desc: module.desc.clone(),
-                post_enable: module.post_enable.clone(),
-                post_disable: module.post_disable.clone(),
-            })
+            .map(|module| self.status(&module.name))
             .collect()
     }
 

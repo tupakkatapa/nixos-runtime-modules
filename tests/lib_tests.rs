@@ -1,11 +1,11 @@
 #[cfg(test)]
 mod tests {
-    use anyhow::{Result, anyhow};
+    use anyhow::Result;
     use runtime_modules::{
         Module, ModuleFile, ModuleRegistry, ModuleState, OperationLock, in_sync, read_applied,
         write_atomic,
     };
-    use std::io::{self, Write};
+    use std::io::Write;
     use tempfile::NamedTempFile;
 
     // Helper to create a test registry
@@ -37,18 +37,6 @@ mod tests {
         let mut registry = ModuleRegistry::new(modules);
         registry.init_lookup();
         registry
-    }
-
-    // Test error context and formatting
-    #[test]
-    fn test_error_handling() {
-        let io_err = io::Error::new(io::ErrorKind::NotFound, "file not found");
-        let wrapped_err = anyhow::Error::new(io_err).context("failed to access file");
-
-        assert!(wrapped_err.to_string().contains("failed to access file"));
-
-        let missing_module_err = anyhow!("module not found: {}", "missing");
-        assert!(missing_module_err.to_string().contains("module not found"));
     }
 
     // Test registry initialization
@@ -100,7 +88,7 @@ mod tests {
         }
         "#;
 
-        write!(temp_file, "{}", json_content)?;
+        write!(temp_file, "{json_content}")?;
 
         let registry = ModuleRegistry::from_file(temp_file.path())?;
 
@@ -120,7 +108,7 @@ mod tests {
         let mut temp_file = NamedTempFile::new()?;
         let json_content = r#"{"enabled":["test1","test2"]}"#;
 
-        write!(temp_file, "{}", json_content)?;
+        write!(temp_file, "{json_content}")?;
 
         let module_file = ModuleFile::from_file(temp_file.path())?;
 
