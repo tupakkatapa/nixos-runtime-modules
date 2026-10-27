@@ -204,6 +204,16 @@ impl ModuleFile {
         changes
     }
 
+    // Drop requested modules the registry no longer has, returning their names
+    pub fn retain_known(&mut self, registry: &ModuleRegistry) -> Vec<String> {
+        let (known, unknown) = self
+            .active_modules
+            .drain(..)
+            .partition(|module| registry.verify_modules_exist(std::slice::from_ref(module)));
+        self.active_modules = known;
+        unknown
+    }
+
     // Disable modules and return if changes were made
     pub fn disable_modules(&mut self, modules: &[String]) -> bool {
         let disable_set: HashSet<_> = modules.iter().collect();

@@ -350,6 +350,24 @@ mod tests {
     }
 
     #[test]
+    fn test_retain_known_drops_removed_modules() {
+        let registry = create_test_registry();
+        let mut module_file = ModuleFile {
+            active_modules: vec!["test1".to_string(), "gone".to_string(), "test3".to_string()],
+        };
+
+        assert_eq!(
+            module_file.retain_known(&registry),
+            vec!["gone".to_string()]
+        );
+        assert_eq!(
+            module_file.active_modules,
+            vec!["test1".to_string(), "test3".to_string()]
+        );
+        assert!(module_file.retain_known(&registry).is_empty());
+    }
+
+    #[test]
     fn test_in_sync() {
         let a = vec!["steam".to_string(), "docker".to_string()];
         let b = vec!["docker".to_string(), "steam".to_string()];

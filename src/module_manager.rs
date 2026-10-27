@@ -35,10 +35,19 @@ impl ModuleManager {
     }
 
     fn load(lock: Option<OperationLock>) -> Result<Self> {
+        let registry =
+            ModuleRegistry::from_file(MODULES_JSON).context("failed to load module registry")?;
+        let mut module_file =
+            ModuleFile::from_file(STATE_FILE).context("failed to load module file")?;
+
+        // The base configuration no longer defines these, so no rebuild can apply them
+        for module in module_file.retain_known(&registry) {
+            println!("warning: '{module}' module no longer exists, dropping it");
+        }
+
         Ok(Self {
-            registry: ModuleRegistry::from_file(MODULES_JSON)
-                .context("failed to load module registry")?,
-            module_file: ModuleFile::from_file(STATE_FILE).context("failed to load module file")?,
+            registry,
+            module_file,
             applied: read_applied(APPLIED_MARKER).context("failed to read applied modules")?,
             _lock: lock,
         })

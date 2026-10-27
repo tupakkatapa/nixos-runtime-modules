@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Concurrent runs no longer race; operations wait for each other
 - `state.json` is written atomically
 - Module descriptions containing `'` no longer break activation
+- Requested modules that no longer exist are dropped instead of forcing a rebuild on every run
 
 ## [0.3.0] - 2026-10-27
 
