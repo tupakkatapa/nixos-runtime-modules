@@ -84,7 +84,7 @@ pub fn apply_configuration() -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!(
-            "warning: configuration applied with warnings (some changes may not be fully applied)"
+            "nixos-rebuild failed; `runtime-modules status` shows what was applied"
         ))
     }
 }

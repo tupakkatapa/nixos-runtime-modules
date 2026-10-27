@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Module state is read from the running system, which now records its modules in `/etc/runtime-modules-enabled`
 - `enable`, `disable` and `reset` rebuild whenever the running system differs from the requested modules
+- Clearer messages for failed rebuilds and for modules in an uncertain state
 
 ### Fixed
 - Interrupted rebuilds no longer leave modules reported as enabled

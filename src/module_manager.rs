@@ -93,6 +93,18 @@ impl ModuleManager {
             .collect()
     }
 
+    fn warn_uncertain(&self, module: &str) {
+        match &self.applied {
+            None => println!(
+                "warning: '{module}' module state is unknown, the running system does not record its modules"
+            ),
+            Some(applied) if applied.iter().any(|name| name == module) => {
+                println!("warning: '{module}' module is active but not requested");
+            }
+            Some(_) => println!("warning: '{module}' module is requested but not active"),
+        }
+    }
+
     // Rebuild with the requested modules, unless the running system already has
     // exactly them. The state file is the input of the rebuild, so it is saved
     // first; the outcome is read back from the running system, not recorded.
@@ -117,9 +129,7 @@ impl ModuleManager {
         for module in modules {
             match self.state(module) {
                 ModuleState::Enabled => println!("'{module}' module is already enabled"),
-                ModuleState::Uncertain => {
-                    println!("warning: '{module}' module is in an uncertain state");
-                }
+                ModuleState::Uncertain => self.warn_uncertain(module),
                 ModuleState::Disabled => {}
             }
         }
@@ -133,9 +143,7 @@ impl ModuleManager {
         for module in modules {
             match self.state(module) {
                 ModuleState::Enabled => println!("disabling '{module}' module..."),
-                ModuleState::Uncertain => {
-                    println!("warning: '{module}' module is in an uncertain state");
-                }
+                ModuleState::Uncertain => self.warn_uncertain(module),
                 ModuleState::Disabled => println!("'{module}' module is already disabled"),
             }
         }
